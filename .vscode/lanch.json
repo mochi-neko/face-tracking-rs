@@ -1,0 +1,42 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'face-tracking-rs'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=face-tracking-rs",
+                    "--package=face-tracking-rs"
+                ],
+                "filter": {
+                    "name": "face-tracking-rs",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'face-tracking-rs'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=face-tracking-rs",
+                    "--package=face-tracking-rs"
+                ],
+                "filter": {
+                    "name": "face-tracking-rs",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
