@@ -9,3 +9,13 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.75"
+tokio = "1.33.0"
+tracing = "0.1.40"
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.3.0", features = [
+    "cuda",
+    "cudnn",
+] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.3.0", features = [
+    "cuda",
+] }
