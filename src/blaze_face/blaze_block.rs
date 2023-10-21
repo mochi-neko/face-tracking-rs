@@ -4,6 +4,8 @@
 use candle_core::{Module, Result, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig};
 
+use super::conv2d_parameters::Conv2dParameters;
+
 pub(crate) struct BlazeBlock {
     pub(crate) stride: usize,
     pub(crate) channel_pad: usize,
@@ -11,13 +13,8 @@ pub(crate) struct BlazeBlock {
     pub(crate) conv2: Conv2d,
 }
 
-pub(crate) struct Conv2dParameters {
-    pub(crate) weight: Tensor,
-    pub(crate) bias: Option<Tensor>,
-}
-
 impl BlazeBlock {
-    pub(crate) fn load(
+    pub(crate) fn new(
         in_channels: usize,
         out_channels: usize,
         kernel_size: usize,
@@ -99,7 +96,10 @@ mod tests {
 
     #[test]
     fn test_blaze_block() {
+        // Set up the device
         let device = Device::Cpu;
+
+        // Set up the configuration
         let batch_size = 1;
         let in_channels = 3;
         let out_channels = 16;
@@ -137,7 +137,8 @@ mod tests {
         let conv2_bias =
             Tensor::rand(0., 1., &[out_channels], &device).unwrap();
 
-        let block = BlazeBlock::load(
+        // Instantiate the BlazeBlock
+        let block = BlazeBlock::new(
             in_channels,
             out_channels,
             kernel_size,
@@ -153,6 +154,7 @@ mod tests {
         )
         .unwrap();
 
+        // Set up the input tensor
         let input = Tensor::rand(
             0.,
             1.,
@@ -166,14 +168,102 @@ mod tests {
         )
         .unwrap();
 
-        let x = block.forward(&input).unwrap();
+        // Call forward method and get the output
+        let output = block.forward(&input).unwrap();
         assert_eq!(
-            x.dims(),
+            output.dims(),
             &[
                 batch_size,
                 out_channels,
                 width,
                 height,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_blaze_block_for_stride_2() {
+        // Set up the device
+        let device = Device::Cpu;
+
+        // Set up the configuration
+        let batch_size = 1;
+        let in_channels = 3;
+        let out_channels = 16;
+        let width = 64;
+        let height = 64;
+        let kernel_size = 3;
+        let stride = 2;
+
+        let conv1_weight = Tensor::rand(
+            0.,
+            1.,
+            &[
+                in_channels,
+                1,
+                kernel_size,
+                kernel_size,
+            ],
+            &device,
+        )
+        .unwrap();
+        let conv1_bias = Tensor::rand(0., 1., &[in_channels], &device).unwrap();
+
+        let conv2_weight = Tensor::rand(
+            0.,
+            1.,
+            &[
+                out_channels,
+                in_channels,
+                1,
+                1,
+            ],
+            &device,
+        )
+        .unwrap();
+        let conv2_bias =
+            Tensor::rand(0., 1., &[out_channels], &device).unwrap();
+
+        // Instantiate the BlazeBlock
+        let block = BlazeBlock::new(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            Conv2dParameters {
+                weight: conv1_weight.clone(),
+                bias: Some(conv1_bias.clone()),
+            },
+            Conv2dParameters {
+                weight: conv2_weight.clone(),
+                bias: Some(conv2_bias.clone()),
+            },
+        )
+        .unwrap();
+
+        // Set up the input tensor
+        let input = Tensor::rand(
+            0.,
+            1.,
+            &[
+                batch_size,
+                in_channels,
+                width,
+                height,
+            ],
+            &device,
+        )
+        .unwrap();
+
+        // Call forward method and get the output
+        let output = block.forward(&input).unwrap();
+        assert_eq!(
+            output.dims(),
+            &[
+                batch_size,
+                out_channels,
+                width / 2,
+                height / 2,
             ]
         );
     }
