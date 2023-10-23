@@ -23,24 +23,28 @@ pub(crate) trait BlazeFaceModel {
 
 pub(crate) struct BlazeFace {
     model: Box<dyn BlazeFaceModel>,
+    anchors: Tensor,
 }
 
 impl BlazeFace {
     pub(crate) fn load(
         model_type: ModelType,
         variables: VarBuilder,
+        anchors: Tensor,
     ) -> Result<BlazeFace> {
         match model_type {
             | ModelType::Back => {
                 let model = BlazeFaceBackModel::load(variables)?;
                 Ok(BlazeFace {
                     model: Box::new(model),
+                    anchors,
                 })
             },
             | ModelType::Front => {
                 let model = BlazeFaceFrontModel::load(variables)?;
                 Ok(BlazeFace {
                     model: Box::new(model),
+                    anchors,
                 })
             },
         }
@@ -68,14 +72,19 @@ mod tests {
 
         // Load the variables
         let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/blazefaceback.pth",
+            "src/blaze_face/data/blazefaceback.pth",
             dtype,
             &device,
         )
         .unwrap();
 
+        // Load the anchors
+        let anchors =
+            Tensor::read_npy("src/blaze_face/data/anchorsback.npy").unwrap();
+
         // Load the model
-        let model = BlazeFace::load(ModelType::Back, variables).unwrap();
+        let model =
+            BlazeFace::load(ModelType::Back, variables, anchors).unwrap();
 
         // Set up the input Tensor
         let input = Tensor::zeros(
@@ -101,14 +110,19 @@ mod tests {
 
         // Load the variables
         let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/blazeface.pth",
+            "src/blaze_face/data/blazeface.pth",
             dtype,
             &device,
         )
         .unwrap();
 
+        // Load the anchors
+        let anchors =
+            Tensor::read_npy("src/blaze_face/data/anchors.npy").unwrap();
+
         // Load the model
-        let model = BlazeFace::load(ModelType::Front, variables).unwrap();
+        let model =
+            BlazeFace::load(ModelType::Front, variables, anchors).unwrap();
 
         // Set up the input Tensor
         let input = Tensor::zeros(

@@ -700,7 +700,7 @@ mod tests {
 
         // Load the variables
         let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/blazeface.pth",
+            "src/blaze_face/data/blazeface.pth",
             dtype,
             &device,
         )
