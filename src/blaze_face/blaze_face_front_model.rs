@@ -1,16 +1,15 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-use candle_core::{backend, Module, Result, Tensor};
+use candle_core::{Module, Result, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, VarBuilder};
 
 use super::{
     blaze_block::BlazeBlock, blaze_face::BlazeFaceModel,
-    blaze_face_config::BlazeFaceConfig, conv2d_parameters::Conv2dParameters,
+    conv2d_parameters::Conv2dParameters,
 };
 
 pub(crate) struct BlazeFaceFrontModel {
-    pub(crate) config: BlazeFaceConfig,
     head: Conv2d,
     backbone_1: Vec<BlazeBlock>,
     backbone_2: Vec<BlazeBlock>,
@@ -22,19 +21,6 @@ pub(crate) struct BlazeFaceFrontModel {
 
 impl BlazeFaceFrontModel {
     pub(crate) fn load(variables: VarBuilder) -> Result<BlazeFaceFrontModel> {
-        let config = BlazeFaceConfig {
-            num_classes: 1,
-            num_anchors: 896,
-            num_coords: 16,
-            score_clipping_thresh: 100.0,
-            x_scale: 128.0,
-            y_scale: 128.0,
-            h_scale: 128.0,
-            w_scale: 128.0,
-            min_score_thresh: 0.75,
-            min_suppression_threshold: 0.3,
-        };
-
         let head = Conv2d::new(
             variables.get_with_hints(
                 (24, 3, 5, 5),
@@ -605,7 +591,6 @@ impl BlazeFaceFrontModel {
         );
 
         Ok(BlazeFaceFrontModel {
-            config,
             head,
             backbone_1,
             backbone_2,

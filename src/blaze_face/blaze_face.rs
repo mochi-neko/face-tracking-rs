@@ -6,6 +6,7 @@ use candle_nn::VarBuilder;
 
 use super::{
     blaze_face_back_model::BlazeFaceBackModel,
+    blaze_face_config::BlazeFaceConfig,
     blaze_face_front_model::BlazeFaceFrontModel,
 };
 
@@ -24,6 +25,7 @@ pub(crate) trait BlazeFaceModel {
 pub(crate) struct BlazeFace {
     model: Box<dyn BlazeFaceModel>,
     anchors: Tensor,
+    config: BlazeFaceConfig,
 }
 
 impl BlazeFace {
@@ -31,6 +33,7 @@ impl BlazeFace {
         model_type: ModelType,
         variables: VarBuilder,
         anchors: Tensor,
+        config: BlazeFaceConfig,
     ) -> Result<BlazeFace> {
         match model_type {
             | ModelType::Back => {
@@ -38,6 +41,7 @@ impl BlazeFace {
                 Ok(BlazeFace {
                     model: Box::new(model),
                     anchors,
+                    config,
                 })
             },
             | ModelType::Front => {
@@ -45,6 +49,7 @@ impl BlazeFace {
                 Ok(BlazeFace {
                     model: Box::new(model),
                     anchors,
+                    config,
                 })
             },
         }
@@ -55,6 +60,35 @@ impl BlazeFace {
         xs: &Tensor,
     ) -> Result<(Tensor, Tensor)> {
         self.model.forward(xs)
+    }
+
+    fn convert_tensors_to_detections(
+        &self,
+        raw_boxes: &Tensor,
+        raw_scores: &Tensor,
+    ) -> Result<Vec<Tensor>> {
+        unimplemented!()
+    }
+
+    fn decode_boxes(
+        &self,
+        raw_boxes: &Tensor,
+    ) -> Result<Tensor> {
+        unimplemented!()
+    }
+
+    fn process_scores(
+        &self,
+        raw_scores: &Tensor,
+    ) -> Result<Tensor> {
+        unimplemented!()
+    }
+
+    fn weighted_non_max_suppression(
+        &self,
+        detection: &Tensor,
+    ) -> Result<Tensor> {
+        unimplemented!()
     }
 }
 
@@ -81,10 +115,16 @@ mod tests {
         // Load the anchors
         let anchors =
             Tensor::read_npy("src/blaze_face/data/anchorsback.npy").unwrap();
+        assert_eq!(anchors.dims(), &[896, 4,]);
 
         // Load the model
-        let model =
-            BlazeFace::load(ModelType::Back, variables, anchors).unwrap();
+        let model = BlazeFace::load(
+            ModelType::Back,
+            variables,
+            anchors,
+            BlazeFaceConfig::back(100., 0.65, 0.3),
+        )
+        .unwrap();
 
         // Set up the input Tensor
         let input = Tensor::zeros(
@@ -119,10 +159,16 @@ mod tests {
         // Load the anchors
         let anchors =
             Tensor::read_npy("src/blaze_face/data/anchors.npy").unwrap();
+        assert_eq!(anchors.dims(), &[896, 4,]);
 
         // Load the model
-        let model =
-            BlazeFace::load(ModelType::Front, variables, anchors).unwrap();
+        let model = BlazeFace::load(
+            ModelType::Front,
+            variables,
+            anchors,
+            BlazeFaceConfig::back(100., 0.75, 0.3),
+        )
+        .unwrap();
 
         // Set up the input Tensor
         let input = Tensor::zeros(
