@@ -10,7 +10,7 @@ use super::{
     blaze_face_front_model::BlazeFaceFrontModel,
 };
 
-pub(crate) enum ModelType {
+pub enum ModelType {
     Back,
     Front,
 }
@@ -22,18 +22,20 @@ pub(crate) trait BlazeFaceModel {
     ) -> Result<(Tensor, Tensor)>;
 }
 
-pub(crate) struct BlazeFace {
+pub struct BlazeFace {
     model: Box<dyn BlazeFaceModel>,
     anchors: Tensor,
     config: BlazeFaceConfig,
 }
 
 impl BlazeFace {
-    pub(crate) fn load(
+    pub fn load(
         model_type: ModelType,
         variables: VarBuilder,
         anchors: Tensor,
-        config: BlazeFaceConfig,
+        score_clipping_thresh: f32,
+        min_score_thresh: f32,
+        min_suppression_threshold: f32,
     ) -> Result<BlazeFace> {
         match model_type {
             | ModelType::Back => {
@@ -41,7 +43,11 @@ impl BlazeFace {
                 Ok(BlazeFace {
                     model: Box::new(model),
                     anchors,
-                    config,
+                    config: BlazeFaceConfig::back(
+                        score_clipping_thresh,
+                        min_score_thresh,
+                        min_suppression_threshold,
+                    ),
                 })
             },
             | ModelType::Front => {
@@ -49,7 +55,11 @@ impl BlazeFace {
                 Ok(BlazeFace {
                     model: Box::new(model),
                     anchors,
-                    config,
+                    config: BlazeFaceConfig::front(
+                        score_clipping_thresh,
+                        min_score_thresh,
+                        min_suppression_threshold,
+                    ),
                 })
             },
         }
@@ -122,7 +132,9 @@ mod tests {
             ModelType::Back,
             variables,
             anchors,
-            BlazeFaceConfig::back(100., 0.65, 0.3),
+            100.,
+            0.65,
+            0.3,
         )
         .unwrap();
 
@@ -166,7 +178,9 @@ mod tests {
             ModelType::Front,
             variables,
             anchors,
-            BlazeFaceConfig::back(100., 0.75, 0.3),
+            100.,
+            0.75,
+            0.3,
         )
         .unwrap();
 

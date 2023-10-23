@@ -1,7 +1,7 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-pub(crate) struct BlazeFaceConfig {
+pub struct BlazeFaceConfig {
     pub(crate) num_classes: usize,
     pub(crate) num_anchors: usize,
     pub(crate) num_coords: usize,
