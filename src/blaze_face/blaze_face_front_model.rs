@@ -698,7 +698,6 @@ mod tests {
         let dtype = DType::F16;
         let batch_size = 1;
 
-        // FIXME: Downloaded .pth file is broken from https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.pth
         // Load the variables
         let variables = candle_nn::VarBuilder::from_pth(
             "src/blaze_face/blazeface.pth",
