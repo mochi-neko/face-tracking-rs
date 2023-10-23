@@ -91,4 +91,37 @@ mod tests {
         assert_eq!(output.0.dims(), &[batch_size, 896, 1,]);
         assert_eq!(output.1.dims(), &[batch_size, 896, 16,]);
     }
+
+    #[test]
+    fn test_forward_front() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+        let batch_size = 1;
+
+        // Load the variables
+        let variables = candle_nn::VarBuilder::from_pth(
+            "src/blaze_face/blazeface.pth",
+            dtype,
+            &device,
+        )
+        .unwrap();
+
+        // Load the model
+        let model = BlazeFace::load(ModelType::Front, variables).unwrap();
+
+        // Set up the input Tensor
+        let input = Tensor::zeros(
+            (batch_size, 3, 128, 128),
+            dtype,
+            &device,
+        )
+        .unwrap();
+
+        // Call forward method and get the output
+        let output = model.forward(&input).unwrap();
+
+        assert_eq!(output.0.dims(), &[batch_size, 896, 1,]);
+        assert_eq!(output.1.dims(), &[batch_size, 896, 16,]);
+    }
 }
