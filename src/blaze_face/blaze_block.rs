@@ -7,10 +7,10 @@ use candle_nn::{Conv2d, Conv2dConfig};
 use super::conv2d_parameters::Conv2dParameters;
 
 pub(crate) struct BlazeBlock {
-    pub(crate) stride: usize,
-    pub(crate) channel_pad: usize,
-    pub(crate) conv1: Conv2d,
-    pub(crate) conv2: Conv2d,
+    stride: usize,
+    channel_pad: usize,
+    conv1: Conv2d,
+    conv2: Conv2d,
 }
 
 impl BlazeBlock {
@@ -37,18 +37,15 @@ impl BlazeBlock {
                 Conv2dConfig {
                     padding,
                     stride,
-                    dilation: 1, // Default
                     groups: in_channels,
+                    ..Default::default()
                 },
             ),
             conv2: Conv2d::new(
                 conv2_parameters.weight,
                 conv2_parameters.bias,
                 Conv2dConfig {
-                    padding: 0,  // Default
-                    stride: 1,   // Default
-                    dilation: 1, // Default
-                    groups: 1,   // Default
+                    ..Default::default()
                 },
             ),
         })
@@ -61,24 +58,20 @@ impl Module for BlazeBlock {
         xs: &Tensor,
     ) -> Result<Tensor> {
         let h = if self.stride == 2 {
-            let h = xs.pad_with_zeros(2, 0, 2)?;
-            h.pad_with_zeros(3, 0, 2)?
+            xs.pad_with_zeros(2, 0, 2)? // height padding
+                .pad_with_zeros(3, 0, 2)? // width padding
         } else {
             xs.clone()
         };
 
         let x = if self.stride == 2 {
-            xs.max_pool2d_with_stride(self.stride, self.stride)?
+            xs.max_pool2d_with_stride(self.stride, self.stride)? // max pooling
         } else {
             xs.clone()
         };
 
         let x = if self.channel_pad > 0 {
-            x.pad_with_zeros(
-                1, // channel dimension
-                0,
-                self.channel_pad,
-            )?
+            x.pad_with_zeros(1, 0, self.channel_pad)? // channel padding
         } else {
             x
         };
@@ -101,8 +94,8 @@ mod tests {
 
         // Set up the configuration
         let batch_size = 1;
-        let in_channels = 3;
-        let out_channels = 16;
+        let in_channels = 24;
+        let out_channels = 24;
         let width = 64;
         let height = 64;
         let kernel_size = 3;
@@ -111,34 +104,24 @@ mod tests {
         let conv1_weight = Tensor::rand(
             0.,
             1.,
-            &[
-                in_channels,
-                1,
-                kernel_size,
-                kernel_size,
-            ],
+            (in_channels, 1, kernel_size, kernel_size),
             &device,
         )
         .unwrap();
-        let conv1_bias = Tensor::rand(0., 1., &[in_channels], &device).unwrap();
+        let conv1_bias = Tensor::rand(0., 1., (in_channels,), &device).unwrap();
 
         let conv2_weight = Tensor::rand(
             0.,
             1.,
-            &[
-                out_channels,
-                in_channels,
-                1,
-                1,
-            ],
+            (out_channels, in_channels, 1, 1),
             &device,
         )
         .unwrap();
         let conv2_bias =
-            Tensor::rand(0., 1., &[out_channels], &device).unwrap();
+            Tensor::rand(0., 1., (out_channels,), &device).unwrap();
 
         // Instantiate the BlazeBlock
-        let block = BlazeBlock::new(
+        let model = BlazeBlock::new(
             in_channels,
             out_channels,
             kernel_size,
@@ -166,10 +149,10 @@ mod tests {
             ],
             &device,
         )
-        .unwrap();
+        .unwrap(); // (1, 24, 64, 64)
 
         // Call forward method and get the output
-        let output = block.forward(&input).unwrap();
+        let output = model.forward(&input).unwrap(); // (1, 24, 64, 64)
         assert_eq!(
             output.dims(),
             &[
@@ -188,8 +171,8 @@ mod tests {
 
         // Set up the configuration
         let batch_size = 1;
-        let in_channels = 3;
-        let out_channels = 16;
+        let in_channels = 24;
+        let out_channels = 28;
         let width = 64;
         let height = 64;
         let kernel_size = 3;
@@ -198,31 +181,21 @@ mod tests {
         let conv1_weight = Tensor::rand(
             0.,
             1.,
-            &[
-                in_channels,
-                1,
-                kernel_size,
-                kernel_size,
-            ],
+            (in_channels, 1, kernel_size, kernel_size),
             &device,
         )
         .unwrap();
-        let conv1_bias = Tensor::rand(0., 1., &[in_channels], &device).unwrap();
+        let conv1_bias = Tensor::rand(0., 1., (in_channels,), &device).unwrap();
 
         let conv2_weight = Tensor::rand(
             0.,
             1.,
-            &[
-                out_channels,
-                in_channels,
-                1,
-                1,
-            ],
+            (out_channels, in_channels, 1, 1),
             &device,
         )
         .unwrap();
         let conv2_bias =
-            Tensor::rand(0., 1., &[out_channels], &device).unwrap();
+            Tensor::rand(0., 1., (out_channels,), &device).unwrap();
 
         // Instantiate the BlazeBlock
         let block = BlazeBlock::new(
@@ -245,25 +218,20 @@ mod tests {
         let input = Tensor::rand(
             0.,
             1.,
-            &[
-                batch_size,
-                in_channels,
-                width,
-                height,
-            ],
+            (batch_size, in_channels, width, height),
             &device,
         )
-        .unwrap();
+        .unwrap(); // (1, 24, 64, 64)
 
         // Call forward method and get the output
-        let output = block.forward(&input).unwrap();
+        let output = block.forward(&input).unwrap(); // (1, 28, 32, 32)
         assert_eq!(
             output.dims(),
             &[
                 batch_size,
                 out_channels,
-                width / 2,
-                height / 2,
+                width / 2,  // stride = 2
+                height / 2, // stride = 2
             ]
         );
     }

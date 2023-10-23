@@ -7,8 +7,8 @@ use candle_nn::{Conv2d, Conv2dConfig};
 use super::conv2d_parameters::Conv2dParameters;
 
 pub(crate) struct FinalBlazeBlock {
-    pub(crate) conv1: Conv2d,
-    pub(crate) conv2: Conv2d,
+    conv1: Conv2d,
+    conv2: Conv2d,
 }
 
 impl FinalBlazeBlock {
@@ -22,20 +22,16 @@ impl FinalBlazeBlock {
                 conv1_parameters.weight,
                 conv1_parameters.bias,
                 Conv2dConfig {
-                    padding: 0,
                     stride: 2,
-                    dilation: 1,
                     groups: channels,
+                    ..Default::default()
                 },
             ),
             conv2: Conv2d::new(
                 conv2_parameters.weight,
                 conv2_parameters.bias,
                 Conv2dConfig {
-                    padding: 0,
-                    stride: 1,
-                    dilation: 1,
-                    groups: 1,
+                    ..Default::default()
                 },
             ),
         })
@@ -47,8 +43,9 @@ impl Module for FinalBlazeBlock {
         &self,
         xs: &Tensor,
     ) -> Result<Tensor> {
-        let h = xs.pad_with_zeros(2, 0, 2)?;
-        let h = h.pad_with_zeros(3, 0, 2)?;
+        let h = xs
+            .pad_with_zeros(2, 0, 2)? // height padding
+            .pad_with_zeros(3, 0, 2)?; // width padding
 
         let x = self.conv1.forward(&h)?;
         let x = self.conv2.forward(&x)?;
@@ -68,29 +65,23 @@ mod tests {
 
         // Set up the configuration
         let batch_size = 1;
-        let channels = 3;
+        let channels = 96;
         let width = 64;
         let height = 64;
 
         // Set up the convolution parameters
         let conv1_weight =
-            Tensor::rand(0., 1., &[channels, 1, 3, 3], &device).unwrap();
-        let conv1_bias = Tensor::rand(0., 1., &[channels], &device).unwrap();
+            Tensor::rand(0., 1., (channels, 1, 3, 3), &device).unwrap();
+        let conv1_bias = Tensor::rand(0., 1., (channels), &device).unwrap();
 
         let conv2_weight = Tensor::rand(
             0.,
             1.,
-            &[
-                channels * 2,
-                channels,
-                1,
-                1,
-            ],
+            (channels, channels, 1, 1),
             &device,
         )
         .unwrap();
-        let conv2_bias =
-            Tensor::rand(0., 1., &[channels * 2], &device).unwrap();
+        let conv2_bias = Tensor::rand(0., 1., (channels), &device).unwrap();
 
         // Instantiate the FinalBlazeBlock
         let block = FinalBlazeBlock::new(
@@ -110,23 +101,19 @@ mod tests {
         let input = Tensor::rand(
             0.,
             1.,
-            &[
-                batch_size, channels, width, height,
-            ],
+            (batch_size, channels, width, height),
             &device,
         )
-        .unwrap();
+        .unwrap(); // (1, 96, 64, 64)
 
         // Call forward method and get the output
-        let output = block.forward(&input).unwrap();
+        let output = block.forward(&input).unwrap(); // (1, 96, 32, 32)
 
-        // Verify the output dimensions
-        // Assuming that the output channels are twice the input channels, and the width and height are halved due to stride of 2
         assert_eq!(
             output.dims(),
             &[
                 batch_size,
-                channels * 2,
+                channels,
                 width / 2,
                 height / 2
             ]
