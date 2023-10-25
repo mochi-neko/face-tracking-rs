@@ -3,8 +3,8 @@
 
 use std::ops::Add;
 
-use candle_core::{IndexOp, Result, Tensor};
-use candle_nn::VarBuilder;
+use candle_core::{IndexOp, Result, Tensor, D};
+use candle_nn::{ops, VarBuilder};
 use half::f16;
 
 use super::{
@@ -71,17 +71,67 @@ impl BlazeFace {
     fn forward(
         &self,
         xs: &Tensor, // back:(batch_size, 3, 256, 256) or front:(batch_size, 3, 128, 128)
-    ) -> Result<(Tensor, Tensor)> // (batch_size, 896, 16), (batch_size, 896, 1)
+    ) -> Result<(Tensor, Tensor)> // score:(batch, 896, 1), boxes:(batch, 896, 16)
     {
         self.model.forward(xs)
     }
 
-    fn convert_tensors_to_detections(
+    fn predict_on_batch() {
+        unimplemented!()
+    }
+
+    fn tensors_to_detections(
         &self,
         raw_boxes: &Tensor,  // (batch_size, 896, 16)
         raw_scores: &Tensor, // (batch_size, 896, 1)
-    ) -> Result<Vec<Tensor>> {
-        unimplemented!()
+    ) -> Result<Vec<Tensor>> // Vec<(num_detections, 17)> with length:batch_size
+    {
+        assert_eq!(raw_boxes.dims(), &[1, 896, 16]);
+        assert_eq!(raw_scores.dims(), &[1, 896, 1]);
+
+        let detection_boxes =
+            BlazeFace::decode_boxes(raw_boxes, &self.anchors, &self.config)?; // (batch_size, 896, 16)
+        assert_eq!(detection_boxes.dims(), &[1, 896, 16]);
+
+        raw_scores.clamp(
+            -self
+                .config
+                .score_clipping_thresh,
+            self.config
+                .score_clipping_thresh,
+        )?;
+
+        let detection_scores = ops::sigmoid(raw_scores)?.squeeze(D::Minus1)?; // (batch_size, 896)
+        assert_eq!(detection_scores.dims(), &[1, 896]);
+
+        let indices = BlazeFace::unmasked_indices(
+            &detection_scores,
+            self.config.min_score_thresh,
+        )?; // (batch_size, num_detections)
+
+        let mut output = Vec::new();
+        for batch in 0..raw_boxes.dims()[0] {
+            // Filtering
+            let boxes = detection_boxes
+                .i((batch, .., ..))?
+                .index_select(&indices.i((batch, ..))?, 0)?; // (num_detections, 16)
+            let scores = detection_scores
+                .i((batch, ..))?
+                .index_select(&indices.i((batch, ..))?, 0)?; // (num_detections, 1)
+
+            if boxes.elem_count() == 0 || scores.elem_count() == 0 {
+                output.push(Tensor::zeros(
+                    (0, 17),
+                    raw_boxes.dtype(),
+                    raw_boxes.device(),
+                )?);
+            } else {
+                let detection = Tensor::cat(&[boxes, scores], 1)?; // (896, 17)
+                output.push(detection);
+            }
+        }
+
+        Ok(output) // Vec<(num_detections, 17)> with length:batch_size
     }
 
     fn decode_boxes(
@@ -184,11 +234,43 @@ impl BlazeFace {
         Ok(boxes) // (batch_size, 896, 16)
     }
 
-    fn process_scores(
-        &self,
-        raw_scores: &Tensor,
-    ) -> Result<Tensor> {
-        unimplemented!()
+    // TODO: May be optimized
+    fn unmasked_indices(
+        score: &Tensor, // (batch_size, 896)
+        threshold: f16,
+    ) -> Result<Tensor> // (batch_size, num_unmasked)
+    {
+        let batch_size = score.dims()[0];
+
+        let mask = score.ge(threshold)?; // (batch_size, 896)
+        assert_eq!(mask.dims(), &[batch_size, 896]);
+
+        // Check unmasked indices
+        let mut indices = Vec::new();
+        for batch in 0..batch_size {
+            let batch_indices = mask
+                .i((batch, ..))? // (896)
+                .to_vec1::<u8>()?
+                .iter()
+                .enumerate()
+                .filter(|(_, x)| **x == 1)
+                .map(|(i, _)| i as i64)
+                .collect::<Vec<i64>>();
+            indices.push(batch_indices);
+        }
+
+        // Convert to Tensor
+        let mut indices_tensor = Vec::new();
+        for batch in 0..batch_size {
+            let batch_indices = Tensor::from_slice(
+                &indices[batch],
+                indices[batch].len(),
+                score.device(),
+            )?; // (num_unmasked)
+            indices_tensor.push(batch_indices);
+        }
+
+        Tensor::stack(&indices_tensor, 0) // (batch_size, num_unmasked)
     }
 
     fn weighted_non_max_suppression(
@@ -318,5 +400,88 @@ mod tests {
         let boxes = BlazeFace::decode_boxes(&input, &anchors, &config).unwrap();
 
         assert_eq!(boxes.dims(), &[batch_size, 896, 16]);
+    }
+
+    #[test]
+    fn test_unmasked_indices() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+        let batch_size = 1;
+
+        // Set up the ones Tensor
+        let ones = Tensor::ones((batch_size, 896), dtype, &device).unwrap();
+
+        // Unmasked indices
+        let indices =
+            BlazeFace::unmasked_indices(&ones, f16::from_f32(0.5)).unwrap();
+
+        assert_eq!(indices.dims(), &[batch_size, 896]);
+
+        // Set up the zeros Tensor
+        let zeros = Tensor::zeros((batch_size, 896), dtype, &device).unwrap();
+
+        // Unmasked indices
+        let indices =
+            BlazeFace::unmasked_indices(&zeros, f16::from_f32(0.5)).unwrap();
+
+        assert_eq!(indices.dims(), &[batch_size, 0]);
+    }
+
+    #[test]
+    fn test_tensors_to_detections() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+        let batch_size = 1;
+
+        // Load the variables
+        let variables = candle_nn::VarBuilder::from_pth(
+            "src/blaze_face/data/blazefaceback.pth",
+            dtype,
+            &device,
+        )
+        .unwrap();
+
+        // Load the anchors
+        let anchors = Tensor::read_npy("src/blaze_face/data/anchorsback.npy")
+            .unwrap()
+            .to_dtype(dtype)
+            .unwrap(); // (896, 4)
+        assert_eq!(anchors.dims(), &[896, 4]);
+
+        // Load the model
+        let model = BlazeFace::load(
+            ModelType::Back,
+            variables,
+            anchors,
+            100.,
+            0.65,
+            0.3,
+        )
+        .unwrap();
+
+        // Set up the input Tensor
+        let input = Tensor::zeros(
+            (batch_size, 3, 256, 256),
+            dtype,
+            &device,
+        )
+        .unwrap(); // (batch_size, 3, 256, 256)
+        assert_eq!(input.dims(), &[batch_size, 3, 256, 256]);
+
+        // Call forward method and get the output
+        let (raw_scores, raw_boxes) = model.forward(&input).unwrap();
+        // raw_scores: (batch_size, 896, 1), raw_boxes: (batch_size, 896, 16)
+        assert_eq!(raw_boxes.dims(), &[batch_size, 896, 16]);
+        assert_eq!(raw_scores.dims(), &[batch_size, 896, 1]);
+
+        // Tensors to detections
+        let detections = model
+            .tensors_to_detections(&raw_boxes, &raw_scores)
+            .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
+
+        assert_eq!(detections.len(), batch_size);
+        assert_eq!(detections[0].dims(), &[0, 17]);
     }
 }

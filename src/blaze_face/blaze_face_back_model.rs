@@ -1092,7 +1092,8 @@ impl BlazeFaceModel for BlazeFaceBackModel {
     fn forward(
         &self,
         xs: &Tensor, // (batch, 3, 256, 256)
-    ) -> Result<(Tensor, Tensor)> {
+    ) -> Result<(Tensor, Tensor)> // score:(batch, 896, 1), boxes:(batch, 896, 16)
+    {
         let x = xs
             .pad_with_zeros(2, 1, 2)? // height padding
             .pad_with_zeros(3, 1, 2)?; // width padding
