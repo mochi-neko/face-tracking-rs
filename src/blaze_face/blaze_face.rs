@@ -86,12 +86,8 @@ impl BlazeFace {
         raw_scores: &Tensor, // (batch_size, 896, 1)
     ) -> Result<Vec<Tensor>> // Vec<(num_detections, 17)> with length:batch_size
     {
-        assert_eq!(raw_boxes.dims(), &[1, 896, 16]);
-        assert_eq!(raw_scores.dims(), &[1, 896, 1]);
-
         let detection_boxes =
             BlazeFace::decode_boxes(raw_boxes, &self.anchors, &self.config)?; // (batch_size, 896, 16)
-        assert_eq!(detection_boxes.dims(), &[1, 896, 16]);
 
         raw_scores.clamp(
             -self
@@ -102,7 +98,6 @@ impl BlazeFace {
         )?;
 
         let detection_scores = ops::sigmoid(raw_scores)?.squeeze(D::Minus1)?; // (batch_size, 896)
-        assert_eq!(detection_scores.dims(), &[1, 896]);
 
         let indices = BlazeFace::unmasked_indices(
             &detection_scores,
@@ -243,7 +238,6 @@ impl BlazeFace {
         let batch_size = score.dims()[0];
 
         let mask = score.ge(threshold)?; // (batch_size, 896)
-        assert_eq!(mask.dims(), &[batch_size, 896]);
 
         // Check unmasked indices
         let mut indices = Vec::new();
