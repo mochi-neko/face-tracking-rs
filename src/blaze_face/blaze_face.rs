@@ -70,14 +70,34 @@ impl BlazeFace {
 
     fn forward(
         &self,
-        xs: &Tensor, // back:(batch_size, 3, 256, 256) or front:(batch_size, 3, 128, 128)
+        images: &Tensor, // back:(batch_size, 3, 256, 256) or front:(batch_size, 3, 128, 128)
     ) -> Result<(Tensor, Tensor)> // score:(batch, 896, 1), boxes:(batch, 896, 16)
     {
-        self.model.forward(xs)
+        self.model.forward(images)
     }
 
-    fn predict_on_batch() {
+    pub fn predict_on_batch(
+        self,
+        images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
+    ) -> Result<Vec<Tensor>> {
         unimplemented!()
+    }
+
+    fn preprocess_images(
+        images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
+    ) -> Result<Tensor> // same as images
+    {
+        images
+            .broadcast_div(&Tensor::from_slice(
+                &[f16::from_f32(127.5)],
+                1,
+                images.device(),
+            )?)?
+            .broadcast_sub(&Tensor::from_slice(
+                &[f16::from_f32(1.)],
+                1,
+                images.device(),
+            )?)
     }
 
     fn tensors_to_detections(
@@ -477,5 +497,30 @@ mod tests {
 
         assert_eq!(detections.len(), batch_size);
         assert_eq!(detections[0].dims(), &[0, 17]);
+    }
+
+    #[test]
+    fn test_preprocess_images() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+        let batch_size = 1;
+
+        // Set up the input Tensor
+        let input = Tensor::zeros(
+            (batch_size, 3, 256, 256),
+            dtype,
+            &device,
+        )
+        .unwrap(); // (batch_size, 3, 256, 256)
+        assert_eq!(input.dims(), &[batch_size, 3, 256, 256]);
+
+        // Preprocess images
+        let images = BlazeFace::preprocess_images(&input).unwrap(); // (batch_size, 3, 256, 256)
+
+        assert_eq!(
+            images.dims(),
+            &[batch_size, 3, 256, 256]
+        );
     }
 }
