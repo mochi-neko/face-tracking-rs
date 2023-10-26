@@ -1,7 +1,10 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-use std::ops::Add;
+use std::{
+    cmp::{self, Ordering},
+    ops::Add,
+};
 
 use candle_core::{IndexOp, Result, Tensor, D};
 use candle_nn::{ops, VarBuilder};
@@ -80,6 +83,20 @@ impl BlazeFace {
         self,
         images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
     ) -> Result<Vec<Tensor>> {
+        let images = BlazeFace::preprocess_images(images)?; // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
+
+        let (raw_scores, raw_boxes) = self.forward(&images)?; // score:(batch, 896, 1), boxes:(batch, 896, 16)
+
+        let detections = self.tensors_to_detections(&raw_boxes, &raw_scores)?; // Vec<(num_detections, 17)> with length:batch_size
+
+        let mut filtered_detections = Vec::new();
+        for detection in detections {
+            let filtered_detection =
+                self.weighted_non_max_suppression(&detection)?; // (num_detections, 17)
+            filtered_detections.push(filtered_detection);
+        }
+
+        // Ok(filtered_detections) // Vec<(num_detections, 17)> with length:batch_size
         unimplemented!()
     }
 
@@ -259,7 +276,7 @@ impl BlazeFace {
 
         let mask = score.ge(threshold)?; // (batch_size, 896)
 
-        // Check unmasked indices
+        // Collect unmasked indices
         let mut indices = Vec::new();
         for batch in 0..batch_size {
             let batch_indices = mask
@@ -289,9 +306,50 @@ impl BlazeFace {
 
     fn weighted_non_max_suppression(
         &self,
-        detection: &Tensor,
-    ) -> Result<Tensor> {
+        detection: &Tensor, // (num_detections, 17)
+    ) -> Result<Vec<Tensor>> // Vec<Tensor>
+    {
+        if detection.elem_count() == 0 {
+            return Ok(Vec::new());
+        }
+
+        // let mut output = Vec::new();
+
+        let mut remaining = BlazeFace::argsort_by_score(detection)?; // (num_detections)
+
         unimplemented!()
+    }
+
+    fn argsort_by_score(
+        detection: &Tensor, // (num_detections, 17)
+    ) -> Result<Tensor> // (sorted indices of num_detections) of Dtype:u8
+    {
+        let scores = detection
+            .i((.., 16))? // (num_detections)
+            .to_vec1::<f16>()?;
+
+        // Create a vector of indices from 0 to num_detections-1
+        let mut indices: Vec<usize> = (0..scores.len()).collect();
+
+        // Sort the indices by descending order of scores
+        indices.sort_unstable_by(|&a, &b| {
+            let score_a = f32::from(scores[a]);
+            let score_b = f32::from(scores[b]);
+
+            // Reverse
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap()
+        });
+
+        Tensor::from_vec(
+            indices
+                .iter()
+                .map(|x| *x as u8)
+                .collect::<Vec<u8>>(),
+            detection.dims()[0],
+            detection.device(),
+        )
     }
 }
 
@@ -521,6 +579,75 @@ mod tests {
         assert_eq!(
             images.dims(),
             &[batch_size, 3, 256, 256]
+        );
+    }
+
+    #[test]
+    fn test_argsort() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+
+        // Set up the input Tensor
+        let right_eye = Tensor::from_slice(
+            &[
+                0.8, 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                0., 0.4,
+            ],
+            17,
+            &device,
+        )
+        .unwrap(); // (17)
+        let left_eye = Tensor::from_slice(
+            &[
+                0., 0.7, 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                0., 0.8,
+            ],
+            17,
+            &device,
+        )
+        .unwrap(); // (17)
+        let input = Tensor::stack(&[right_eye, left_eye], 0)
+            .unwrap()
+            .to_dtype(dtype)
+            .unwrap(); // (2, 17)
+        assert_eq!(input.dims(), &[2, 17]);
+        assert_eq!(
+            input
+                .i((0, 16))
+                .unwrap()
+                .to_vec0::<f16>()
+                .unwrap(),
+            f16::from_f32(0.4),
+        );
+        assert_eq!(
+            input
+                .i((1, 16))
+                .unwrap()
+                .to_vec0::<f16>()
+                .unwrap(),
+            f16::from_f32(0.8),
+        );
+
+        // Sort
+        let sorted = BlazeFace::argsort_by_score(&input).unwrap(); // (2)
+        assert_eq!(sorted.dims(), &[2]);
+        assert_eq!(sorted.dtype(), DType::U8);
+        assert_eq!(
+            sorted
+                .i((0,))
+                .unwrap()
+                .to_vec0::<u8>()
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sorted
+                .i((1,))
+                .unwrap()
+                .to_vec0::<u8>()
+                .unwrap(),
+            0
         );
     }
 }
