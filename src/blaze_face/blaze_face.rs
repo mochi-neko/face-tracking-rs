@@ -322,7 +322,9 @@ impl BlazeFace {
             let first_box = detection.i(0..4)?; // (4)
             let other_box = detections
                 .i(remaining.clone())?
-                .i(..4);
+                .i(..4)?; // (remainings, 4)
+
+            let ious = BlazeFace::overlap_similarity(&first_box, &other_box)?; // (remainings)
         }
 
         unimplemented!()
@@ -354,10 +356,13 @@ impl BlazeFace {
     }
 
     fn overlap_similarity(
-        first_box: &Tensor,
-        other_box: &Tensor,
+        first_box: &Tensor, // (4)
+        other_box: &Tensor, // (remainings, 4)
     ) -> Result<Tensor> {
-        unimplemented!()
+        let first_box = first_box.unsqueeze(0)?; // (1, 4)
+
+        BlazeFace::jaccard(&first_box, other_box)? // (1, remainings)
+            .squeeze(0) // (remainings)
     }
 
     fn jaccard(
@@ -832,6 +837,51 @@ mod tests {
                     f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
                     f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
                 ],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_overlap_similarity() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+
+        // Set up the boxes Tensors
+        let box_a = Tensor::from_slice(
+            &[
+                0., 0., 10., 10., //
+            ],
+            4,
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+
+        let box_b = Tensor::from_slice(
+            &[
+                5., 5., 15., 15., //
+                15., 15., 25., 25., //
+            ],
+            (2, 4),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+
+        // Overlap similarity
+        let overlap_similarity =
+            BlazeFace::overlap_similarity(&box_a, &box_b).unwrap(); // (2)
+
+        assert_eq!(overlap_similarity.dims(), &[2]);
+        assert_eq!(
+            overlap_similarity
+                .to_vec1::<f16>()
+                .unwrap(),
+            vec![
+                f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
+                f16::from_f32(0.),      // = 0 / (100 + 100 - 25)
             ]
         );
     }
