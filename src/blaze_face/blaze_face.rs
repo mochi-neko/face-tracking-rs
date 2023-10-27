@@ -306,35 +306,43 @@ impl BlazeFace {
 
     fn weighted_non_max_suppression(
         &self,
-        detection: &Tensor, // (num_detections, 17)
+        detections: &Tensor, // (num_detections, 17)
     ) -> Result<Vec<Tensor>> // Vec<Tensor>
     {
-        if detection.elem_count() == 0 {
+        if detections.elem_count() == 0 {
             return Ok(Vec::new());
         }
 
         // let mut output = Vec::new();
 
-        let mut remaining = BlazeFace::argsort_by_score(detection)?; // (num_detections)
+        let mut remaining = BlazeFace::argsort_by_score(detections)?; // (num_detections)
+        while remaining.len() > 0 {
+            let detection = detections.i(remaining[0] as usize)?; // (17)
+
+            let first_box = detection.i(0..4)?; // (4)
+            let other_box = detections
+                .i(remaining.clone())?
+                .i(..4);
+        }
 
         unimplemented!()
     }
 
     fn argsort_by_score(
         detection: &Tensor, // (num_detections, 17)
-    ) -> Result<Tensor> // (sorted indices of num_detections) of Dtype:u8
+    ) -> Result<Vec<u32>> // Vec<sorted indices of num_detections>
     {
         let scores = detection
             .i((.., 16))? // (num_detections)
             .to_vec1::<f16>()?;
 
         // Create a vector of indices from 0 to num_detections-1
-        let mut indices: Vec<usize> = (0..scores.len()).collect();
+        let mut indices: Vec<u32> = (0u32..scores.len() as u32).collect();
 
         // Sort the indices by descending order of scores
         indices.sort_unstable_by(|&a, &b| {
-            let score_a = f32::from(scores[a]);
-            let score_b = f32::from(scores[b]);
+            let score_a = f32::from(scores[a as usize]);
+            let score_b = f32::from(scores[b as usize]);
 
             // Reverse
             score_b
@@ -342,14 +350,58 @@ impl BlazeFace {
                 .unwrap()
         });
 
-        Tensor::from_vec(
-            indices
-                .iter()
-                .map(|x| *x as u8)
-                .collect::<Vec<u8>>(),
-            detection.dims()[0],
-            detection.device(),
-        )
+        Ok(indices)
+    }
+
+    fn overlap_similarity(
+        first_box: &Tensor,
+        other_box: &Tensor,
+    ) -> Result<Tensor> {
+        unimplemented!()
+    }
+
+    fn jaccard_overlap(
+        box_a: &Tensor,
+        box_b: &Tensor,
+    ) -> Result<Tensor> {
+        unimplemented!()
+    }
+
+    fn intersect(
+        box_a: &Tensor, // (a, 4)
+        box_b: &Tensor, // (b, 4)
+    ) -> Result<Tensor> // (a, b)
+    {
+        let a = box_a.dims()[0];
+        let b = box_b.dims()[0];
+
+        let a_max_xy = box_a
+            .i((.., 2..4))?
+            .unsqueeze(1)?
+            .expand(&[a, b, 2])?; // (a, b, 2)
+
+        let b_max_xy = box_b
+            .i((.., 2..4))?
+            .unsqueeze(0)?
+            .expand(&[a, b, 2])?; // (a, b, 2)
+
+        let a_min_xy = box_a
+            .i((.., 0..2))?
+            .unsqueeze(1)?
+            .expand(&[a, b, 2])?; // (a, b, 2)
+
+        let b_min_xy = box_b
+            .i((.., 0..2))?
+            .unsqueeze(0)?
+            .expand(&[a, b, 2])?; // (a, b, 2)
+
+        let max_xy = Tensor::stack(&[a_max_xy, b_max_xy], 0)?.min(0)?; // (a, b, 2)
+        let min_xy = Tensor::stack(&[a_min_xy, b_min_xy], 0)?.max(0)?; // (a, b, 2)
+        let inter = Tensor::clamp(&(max_xy - min_xy)?, 0., f16::INFINITY)?; // (a, b, 2)
+
+        inter
+            .i((.., .., 0))?
+            .mul(&inter.i((.., .., 1))?) // (a, b)
     }
 }
 
@@ -630,24 +682,80 @@ mod tests {
         );
 
         // Sort
-        let sorted = BlazeFace::argsort_by_score(&input).unwrap(); // (2)
-        assert_eq!(sorted.dims(), &[2]);
-        assert_eq!(sorted.dtype(), DType::U8);
+        let sorted = BlazeFace::argsort_by_score(&input).unwrap();
+        assert_eq!(sorted.len(), 2);
+        assert_eq!(sorted[0], 1);
+        assert_eq!(sorted[1], 0);
+    }
+
+    #[test]
+    fn test_intersect() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+
+        // Set up the boxes Tensors
+        let box_a = Tensor::from_slice(
+            &[
+                0., 0., 10., 10., //
+                10., 10., 20., 20., //
+            ],
+            (2, 4),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+        assert_eq!(box_a.dims(), &[2, 4]);
         assert_eq!(
-            sorted
-                .i((0,))
-                .unwrap()
-                .to_vec0::<u8>()
+            box_a
+                .to_vec2::<f16>()
                 .unwrap(),
-            1
+            vec![
+                [
+                    f16::from_f32(0.),
+                    f16::from_f32(0.),
+                    f16::from_f32(10.),
+                    f16::from_f32(10.)
+                ],
+                [
+                    f16::from_f32(10.),
+                    f16::from_f32(10.),
+                    f16::from_f32(20.),
+                    f16::from_f32(20.)
+                ],
+            ]
         );
+
+        let box_b = Tensor::from_slice(
+            &[
+                5., 5., 15., 15., //
+                15., 15., 25., 25., //
+            ],
+            (2, 4),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+
+        // Intersect
+        let intersect = BlazeFace::intersect(&box_a, &box_b).unwrap(); // (2, 2)
+
+        assert_eq!(intersect.dims(), &[2, 2]);
         assert_eq!(
-            sorted
-                .i((1,))
-                .unwrap()
-                .to_vec0::<u8>()
+            intersect
+                .to_vec2::<f16>()
                 .unwrap(),
-            0
+            vec![
+                [
+                    f16::from_f32(25.), // (0, 0, 10, 10) intersects (5, 5, 15, 15) with area 25
+                    f16::from_f32(0.), // (0, 0, 10, 10) does not intersect (15, 15, 25, 25)
+                ],
+                [
+                    f16::from_f32(25.), // (10, 10, 20, 20) intersects (5, 5, 15, 15) with area 25
+                    f16::from_f32(25.), // (10, 10, 20, 20) intersects (15, 15, 25, 25) with area 25
+                ],
+            ]
         );
     }
 }
