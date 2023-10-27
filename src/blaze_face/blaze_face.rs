@@ -360,11 +360,37 @@ impl BlazeFace {
         unimplemented!()
     }
 
-    fn jaccard_overlap(
-        box_a: &Tensor,
-        box_b: &Tensor,
+    fn jaccard(
+        box_a: &Tensor, // (a, 4)
+        box_b: &Tensor, // (b, 4)
     ) -> Result<Tensor> {
-        unimplemented!()
+        let inter = BlazeFace::intersect(box_a, box_b)?; // (a, b)
+
+        let area_a = box_a
+            .i((.., 2))?
+            .sub(&box_a.i((.., 0))?)?
+            .mul(
+                &box_a
+                    .i((.., 3))?
+                    .sub(&box_a.i((.., 1))?)?,
+            )?
+            .unsqueeze(1)?
+            .expand(inter.shape())?; // (a, b)
+
+        let area_b = box_b
+            .i((.., 2))?
+            .sub(&box_b.i((.., 0))?)?
+            .mul(
+                &box_b
+                    .i((.., 3))?
+                    .sub(&box_b.i((.., 1))?)?,
+            )?
+            .unsqueeze(0)?
+            .expand(inter.shape())?; // (a, b)
+
+        let union = ((&area_a + &area_b)? - &inter)?; // (a, b)
+
+        inter.div(&union) // (a, b)
     }
 
     fn intersect(
@@ -754,6 +780,57 @@ mod tests {
                 [
                     f16::from_f32(25.), // (10, 10, 20, 20) intersects (5, 5, 15, 15) with area 25
                     f16::from_f32(25.), // (10, 10, 20, 20) intersects (15, 15, 25, 25) with area 25
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_jaccard() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+
+        // Set up the boxes Tensors
+        let box_a = Tensor::from_slice(
+            &[
+                0., 0., 10., 10., //
+                10., 10., 20., 20., //
+            ],
+            (2, 4),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+
+        let box_b = Tensor::from_slice(
+            &[
+                5., 5., 15., 15., //
+                15., 15., 25., 25., //
+            ],
+            (2, 4),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+
+        // Jaccard
+        let jaccard = BlazeFace::jaccard(&box_a, &box_b).unwrap(); // (2, 2)
+
+        assert_eq!(jaccard.dims(), &[2, 2]);
+        assert_eq!(
+            jaccard
+                .to_vec2::<f16>()
+                .unwrap(),
+            vec![
+                [
+                    f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
+                    f16::from_f32(0.),      // = 0 / (100 + 100 - 0)
+                ],
+                [
+                    f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
+                    f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
                 ],
             ]
         );
