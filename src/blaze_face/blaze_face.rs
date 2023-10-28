@@ -146,10 +146,10 @@ impl BlazeFace {
             // Filtering
             let boxes = detection_boxes
                 .i((batch, .., ..))?
-                .index_select(&indices.i((batch, ..))?, 0)?; // (num_detections, 16)
+                .i(&indices.i((batch, ..))?)?; // (num_detections, 16)
             let scores = detection_scores
                 .i((batch, ..))?
-                .index_select(&indices.i((batch, ..))?, 0)?; // (num_detections, 1)
+                .i(&indices.i((batch, ..))?)?; // (num_detections, 1)
 
             if boxes.elem_count() == 0 || scores.elem_count() == 0 {
                 output.push(Tensor::zeros(
@@ -266,11 +266,10 @@ impl BlazeFace {
         Ok(boxes) // (batch_size, 896, 16)
     }
 
-    // TODO: May be optimized
     fn unmasked_indices(
         score: &Tensor, // (batch_size, 896)
         threshold: f16,
-    ) -> Result<Tensor> // (batch_size, num_unmasked)
+    ) -> Result<Tensor> // (batch_size, num_unmasked) of DType::U32
     {
         let batch_size = score.dims()[0];
 
@@ -285,8 +284,8 @@ impl BlazeFace {
                 .iter()
                 .enumerate()
                 .filter(|(_, x)| **x == 1)
-                .map(|(i, _)| i as i64)
-                .collect::<Vec<i64>>();
+                .map(|(i, _)| i as u32)
+                .collect::<Vec<u32>>();
             indices.push(batch_indices);
         }
 
@@ -313,18 +312,32 @@ impl BlazeFace {
             return Ok(Vec::new());
         }
 
-        // let mut output = Vec::new();
+        let mut output = Vec::new();
 
         let mut remaining = BlazeFace::argsort_by_score(detections)?; // (num_detections)
-        while remaining.len() > 0 {
-            let detection = detections.i(remaining[0] as usize)?; // (17)
+        while remaining.elem_count() > 0 {
+            let detection =
+                detections.i(remaining.to_vec1::<u32>()?[0] as usize)?; // (17)
 
             let first_box = detection.i(0..4)?; // (4)
             let other_box = detections
-                .i(remaining.clone())?
+                .i(&remaining)?
                 .i(..4)?; // (remainings, 4)
 
             let ious = BlazeFace::overlap_similarity(&first_box, &other_box)?; // (remainings)
+
+            let mask = ious.gt(self
+                .config
+                .min_suppression_threshold)?; // (unmasked)
+
+            let (unmasked_indices, masked_indices) =
+                BlazeFace::mask_indices(&mask)?; // (unmasked_indices), (masked_indices)
+
+            let overlapping = masked_indices; // (masked_indices)
+            remaining = unmasked_indices; // (unmasked_indices)
+
+            let mut weighted_detection = detection.clone(); // (17)
+            if overlapping.elem_count() > 1 {}
         }
 
         unimplemented!()
@@ -332,7 +345,7 @@ impl BlazeFace {
 
     fn argsort_by_score(
         detection: &Tensor, // (num_detections, 17)
-    ) -> Result<Vec<u32>> // Vec<sorted indices of num_detections>
+    ) -> Result<Tensor> // (num_detections) of DType::U32
     {
         let scores = detection
             .i((.., 16))? // (num_detections)
@@ -352,7 +365,9 @@ impl BlazeFace {
                 .unwrap()
         });
 
-        Ok(indices)
+        let count = indices.len();
+
+        Tensor::from_vec(indices, count, detection.device())
     }
 
     fn overlap_similarity(
@@ -433,6 +448,32 @@ impl BlazeFace {
         inter
             .i((.., .., 0))?
             .mul(&inter.i((.., .., 1))?) // (a, b)
+    }
+
+    fn mask_indices(
+        mask: &Tensor, // (masked_vector) of DType::U8
+    ) -> Result<(Tensor, Tensor)> // (unmasked_indices), (masked_indices) of DType::U32
+    {
+        let mut unmasked = Vec::new();
+        let mut masked = Vec::new();
+        for (i, x) in mask
+            .to_vec1::<u8>()?
+            .iter()
+            .enumerate()
+        {
+            if *x == 1u8 {
+                unmasked.push(i as u32);
+            } else {
+                masked.push(i as u32);
+            }
+        }
+
+        let unmasked =
+            Tensor::from_slice(&unmasked, unmasked.len(), mask.device())?;
+
+        let masked = Tensor::from_slice(&masked, masked.len(), mask.device())?;
+
+        Ok((unmasked, masked))
     }
 }
 
@@ -714,9 +755,19 @@ mod tests {
 
         // Sort
         let sorted = BlazeFace::argsort_by_score(&input).unwrap();
-        assert_eq!(sorted.len(), 2);
-        assert_eq!(sorted[0], 1);
-        assert_eq!(sorted[1], 0);
+        assert_eq!(sorted.dims()[0], 2);
+        assert_eq!(
+            sorted
+                .to_vec1::<u32>()
+                .unwrap()[0],
+            1
+        );
+        assert_eq!(
+            sorted
+                .to_vec1::<u32>()
+                .unwrap()[1],
+            0
+        );
     }
 
     #[test]
@@ -881,8 +932,103 @@ mod tests {
                 .unwrap(),
             vec![
                 f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
-                f16::from_f32(0.),      // = 0 / (100 + 100 - 25)
+                f16::from_f32(0.),      // = 0  / (100 + 100 - 25)
             ]
+        );
+    }
+
+    #[test]
+    fn test_tensor_mask() {
+        let device = Device::Cpu;
+
+        let tensor = Tensor::from_slice(
+            &[
+                0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.,
+            ],
+            11,
+            &device,
+        )
+        .unwrap();
+
+        let threashold = 0.4;
+
+        let mask = tensor.gt(threashold).unwrap();
+        assert_eq!(
+            mask.to_vec1::<u8>().unwrap(),
+            vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
+        );
+
+        let unmasked = tensor.i(&mask).unwrap();
+        assert_eq!(
+            unmasked
+                .to_vec1::<f64>()
+                .unwrap(),
+            vec![0., 0., 0., 0., 0., 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+        );
+
+        let unmask = tensor.le(threashold).unwrap();
+        assert_eq!(
+            unmask
+                .to_vec1::<u8>()
+                .unwrap(),
+            vec![1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]
+        );
+
+        let masked = tensor.i(&unmask).unwrap();
+        assert_eq!(
+            masked
+                .to_vec1::<f64>()
+                .unwrap(),
+            vec![0.1, 0.1, 0.1, 0.1, 0.1, 0., 0., 0., 0., 0., 0.]
+        );
+
+        let selected = tensor
+            .index_select(&mask, 0)
+            .unwrap();
+        assert_eq!(
+            selected
+                .to_vec1::<f64>()
+                .unwrap(),
+            vec![0., 0., 0., 0., 0., 0.1, 0.1, 0.1, 0.1, 0.1, 0.1] // equals to unmasked
+        );
+    }
+
+    #[test]
+    fn test_mask_indices() {
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+
+        let similarities = Tensor::from_slice(
+            &[
+                0., 0.1, 0.2, 0.3, 0.4, 0.5,
+            ],
+            6,
+            &device,
+        )
+        .unwrap()
+        .to_dtype(dtype)
+        .unwrap(); // (6)
+
+        let threashold = f16::from_f32(0.3);
+
+        let (unmasked, masked) = BlazeFace::mask_indices(
+            &similarities
+                .gt(threashold)
+                .unwrap(),
+        )
+        .unwrap(); // (2), (4)
+
+        assert_eq!(
+            unmasked
+                .to_vec1::<u32>()
+                .unwrap(),
+            vec![4, 5]
+        );
+        assert_eq!(
+            masked
+                .to_vec1::<u32>()
+                .unwrap(),
+            vec![0, 1, 2, 3]
         );
     }
 }
