@@ -1,9 +1,8 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-use candle_core::{IndexOp, Result, Tensor, D};
+use candle_core::{DType, Error, IndexOp, Result, Shape, Tensor};
 use candle_nn::{ops, VarBuilder};
-use half::f16;
 
 use super::{
     blaze_face_back_model::BlazeFaceBackModel,
@@ -38,6 +37,25 @@ impl BlazeFace {
         min_score_thresh: f32,
         min_suppression_threshold: f32,
     ) -> Result<Self> {
+        if !variables
+            .device()
+            .same_device(anchors.device())
+        {
+            return Result::Err(Error::DeviceMismatchBinaryOp {
+                lhs: variables.device().location(),
+                rhs: anchors.device().location(),
+                op: "load_blaze_face",
+            });
+        }
+        if anchors.dims() != [896, 4] {
+            return Result::Err(Error::ShapeMismatchBinaryOp {
+                lhs: anchors.shape().clone(),
+                rhs: Shape::from_dims(&[896, 4]),
+                op: "load_blaze_face",
+            });
+        }
+        let anchors = anchors.to_dtype(DType::F32)?;
+
         match model_type {
             | ModelType::Back => {
                 let model = BlazeFaceBackModel::load(variables)?;
@@ -75,12 +93,11 @@ impl BlazeFace {
     }
 
     pub fn predict_on_batch(
-        self,
+        &self,
         images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
-    ) -> Result<Vec<Tensor>> {
-        let images = preprocess_images(images)?; // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
-
-        let (raw_scores, raw_boxes) = self.forward(&images)?; // score:(batch, 896, 1), boxes:(batch, 896, 16)
+    ) -> Result<Vec<Vec<Tensor>>> // Vec<(detected_faces, 17)> with length:batch_size
+    {
+        let (raw_scores, raw_boxes) = self.forward(images)?; // score:(batch, 896, 1), boxes:(batch, 896, 16)
 
         let detections = tensors_to_detections(
             &raw_boxes,
@@ -91,31 +108,21 @@ impl BlazeFace {
 
         let mut filtered_detections = Vec::new();
         for detection in detections {
-            let filtered_detection =
-                weighted_non_max_suppression(&detection, &self.config)?; // (num_detections, 17)
-            filtered_detections.push(filtered_detection);
+            let faces = weighted_non_max_suppression(&detection, &self.config)?; // (detected_faces, 17)
+            if !faces.is_empty() {
+                filtered_detections.push(faces);
+            } else {
+                let zeros = Tensor::zeros(
+                    (0, 17),
+                    detection.dtype(),
+                    detection.device(),
+                )?; // (0, 17)
+                filtered_detections.push(vec![zeros]);
+            }
         }
 
-        // Ok(filtered_detections) // Vec<(num_detections, 17)> with length:batch_size
-        unimplemented!()
+        Ok(filtered_detections) // Vec<(detected_faces, 17)> with length:batch_size
     }
-}
-
-fn preprocess_images(
-    images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
-) -> Result<Tensor> // same as images
-{
-    images
-        .broadcast_div(&Tensor::from_slice(
-            &[f16::from_f32(127.5)],
-            1,
-            images.device(),
-        )?)?
-        .broadcast_sub(&Tensor::from_slice(
-            &[f16::from_f32(1.)],
-            1,
-            images.device(),
-        )?)
 }
 
 fn tensors_to_detections(
@@ -125,14 +132,14 @@ fn tensors_to_detections(
     config: &BlazeFaceConfig,
 ) -> Result<Vec<Tensor>> // Vec<(num_detections, 17)> with length:batch_size
 {
-    let detection_boxes = decode_boxes(raw_boxes, &anchors, &config)?; // (batch_size, 896, 16)
+    let detection_boxes = decode_boxes(raw_boxes, anchors, config)?; // (batch_size, 896, 16)
 
     raw_scores.clamp(
         -config.score_clipping_thresh,
         config.score_clipping_thresh,
     )?;
 
-    let detection_scores = ops::sigmoid(raw_scores)?.squeeze(D::Minus1)?; // (batch_size, 896)
+    let detection_scores = ops::sigmoid(raw_scores)?; // (batch_size, 896, 1)
 
     let indices = unmasked_indices(
         &detection_scores,
@@ -143,9 +150,10 @@ fn tensors_to_detections(
     for batch in 0..raw_boxes.dims()[0] {
         // Filtering
         let boxes = detection_boxes.i((batch, &indices.i((batch, ..))?, ..))?; // (num_detections, 16)
-        let scores = detection_scores.i((batch, &indices.i((batch, ..))?))?; // (num_detections)
+        let scores =
+            detection_scores.i((batch, &indices.i((batch, ..))?, ..))?; // (num_detections, 1)
 
-        if boxes.elem_count() == 0 || scores.elem_count() == 0 {
+        if boxes.dims()[0] == 0 || scores.dims()[0] == 0 {
             output.push(Tensor::zeros(
                 (0, 17),
                 raw_boxes.dtype(),
@@ -173,11 +181,7 @@ fn decode_boxes(
     let w_scale = Tensor::from_slice(&[config.w_scale], 1, raw_boxes.device())?; // (1)
     let h_scale = Tensor::from_slice(&[config.h_scale], 1, raw_boxes.device())?; // (1)
 
-    let two = Tensor::from_slice(
-        &[f16::from_f32(2.)],
-        1,
-        raw_boxes.device(),
-    )?; // (1)
+    let two = Tensor::from_slice(&[2_f32], 1, raw_boxes.device())?; // (1)
 
     let x_anchor = anchors.i((.., 0))?; // (896)
     let y_anchor = anchors.i((.., 1))?; // (896)
@@ -257,8 +261,8 @@ fn decode_boxes(
 }
 
 fn unmasked_indices(
-    score: &Tensor, // (batch_size, 896)
-    threshold: f16,
+    score: &Tensor, // (batch_size, 896, 1)
+    threshold: f32,
 ) -> Result<Tensor> // (batch_size, num_unmasked) of DType::U32
 {
     let batch_size = score.dims()[0];
@@ -269,7 +273,7 @@ fn unmasked_indices(
     let mut indices = Vec::new();
     for batch in 0..batch_size {
         let batch_indices = mask
-            .i((batch, ..))? // (896)
+            .i((batch, .., 0))? // (896)
             .to_vec1::<u8>()?
             .iter()
             .enumerate()
@@ -281,7 +285,9 @@ fn unmasked_indices(
 
     // Convert to Tensor
     let mut indices_tensor = Vec::new();
-    for batch in 0..batch_size {
+    #[allow(clippy::needless_range_loop)]
+    // foreach does not allow to use Result
+    for batch in 0..score.dims()[0] {
         let batch_indices = Tensor::from_slice(
             &indices[batch],
             indices[batch].len(),
@@ -299,15 +305,15 @@ fn argsort_by_score(
 {
     let scores = detection
         .i((.., 16))? // (num_detections)
-        .to_vec1::<f16>()?;
+        .to_vec1::<f32>()?;
 
     // Create a vector of indices from 0 to num_detections-1
     let mut indices: Vec<u32> = (0u32..scores.len() as u32).collect();
 
     // Sort the indices by descending order of scores
     indices.sort_unstable_by(|&a, &b| {
-        let score_a = f32::from(scores[a as usize]);
-        let score_b = f32::from(scores[b as usize]);
+        let score_a = scores[a as usize];
+        let score_b = scores[b as usize];
 
         // Reverse
         score_b
@@ -395,7 +401,7 @@ fn intersect(
 
     let max_xy = Tensor::stack(&[a_max_xy, b_max_xy], 0)?.min(0)?; // (a, b, 2)
     let min_xy = Tensor::stack(&[a_min_xy, b_min_xy], 0)?.max(0)?; // (a, b, 2)
-    let inter = Tensor::clamp(&(max_xy - min_xy)?, 0., f16::INFINITY)?; // (a, b, 2)
+    let inter = Tensor::clamp(&(max_xy - min_xy)?, 0., f32::INFINITY)?; // (a, b, 2)
 
     inter
         .i((.., .., 0))?
@@ -465,9 +471,7 @@ fn weighted_non_max_suppression(
             let scores = overlapped.i((.., 16))?; // (overlapped, 1)
             let total_score = scores.sum(0)?; // (1)
             let overlapped_count = Tensor::from_slice(
-                &[f16::from_f32(
-                    overlapping.dims()[0] as f32,
-                )],
+                &[overlapping.dims()[0] as f32],
                 1,
                 detections.device(),
             )?; // (1)
@@ -503,7 +507,7 @@ mod tests {
     fn test_forward_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
         let batch_size = 1;
 
         // Load the variables
@@ -549,7 +553,7 @@ mod tests {
     fn test_forward_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
         let batch_size = 1;
 
         // Load the variables
@@ -595,7 +599,7 @@ mod tests {
     fn test_decode_boxes() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
         let batch_size = 1;
 
         // Set up the anchors and configuration
@@ -619,22 +623,23 @@ mod tests {
     fn test_unmasked_indices() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
         let batch_size = 1;
 
         // Set up the ones Tensor
-        let ones = Tensor::ones((batch_size, 896), dtype, &device).unwrap();
+        let ones = Tensor::ones((batch_size, 896, 1), dtype, &device).unwrap();
 
         // Unmasked indices
-        let indices = unmasked_indices(&ones, f16::from_f32(0.5)).unwrap();
+        let indices = unmasked_indices(&ones, 0.5).unwrap();
 
         assert_eq!(indices.dims(), &[batch_size, 896]);
 
         // Set up the zeros Tensor
-        let zeros = Tensor::zeros((batch_size, 896), dtype, &device).unwrap();
+        let zeros =
+            Tensor::zeros((batch_size, 896, 1), dtype, &device).unwrap();
 
         // Unmasked indices
-        let indices = unmasked_indices(&zeros, f16::from_f32(0.5)).unwrap();
+        let indices = unmasked_indices(&zeros, 0.5).unwrap();
 
         assert_eq!(indices.dims(), &[batch_size, 0]);
     }
@@ -643,7 +648,7 @@ mod tests {
     fn test_tensors_to_detections() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
         let batch_size = 1;
 
         // Load the variables
@@ -701,35 +706,10 @@ mod tests {
     }
 
     #[test]
-    fn test_preprocess_images() {
-        // Set up the device and dtype
-        let device = Device::Cpu;
-        let dtype = DType::F16;
-        let batch_size = 1;
-
-        // Set up the input Tensor
-        let input = Tensor::zeros(
-            (batch_size, 3, 256, 256),
-            dtype,
-            &device,
-        )
-        .unwrap(); // (batch_size, 3, 256, 256)
-        assert_eq!(input.dims(), &[batch_size, 3, 256, 256]);
-
-        // Preprocess images
-        let images = preprocess_images(&input).unwrap(); // (batch_size, 3, 256, 256)
-
-        assert_eq!(
-            images.dims(),
-            &[batch_size, 3, 256, 256]
-        );
-    }
-
-    #[test]
     fn test_argsort() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
 
         // Set up the input Tensor
         let right_eye = Tensor::from_slice(
@@ -759,17 +739,17 @@ mod tests {
             input
                 .i((0, 16))
                 .unwrap()
-                .to_vec0::<f16>()
+                .to_vec0::<f32>()
                 .unwrap(),
-            f16::from_f32(0.4),
+            0.4,
         );
         assert_eq!(
             input
                 .i((1, 16))
                 .unwrap()
-                .to_vec0::<f16>()
+                .to_vec0::<f32>()
                 .unwrap(),
-            f16::from_f32(0.8),
+            0.8,
         );
 
         // Sort
@@ -793,6 +773,7 @@ mod tests {
     fn test_intersect() {
         // Set up the device and dtype
         let device = Device::Cpu;
+        let dtype = DType::F32;
 
         // Set up the boxes Tensors
         let box_a = Tensor::from_slice(
@@ -804,27 +785,18 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
         assert_eq!(box_a.dims(), &[2, 4]);
         assert_eq!(
             box_a
-                .to_vec2::<f16>()
+                .to_vec2::<f32>()
                 .unwrap(),
             vec![
-                [
-                    f16::from_f32(0.),
-                    f16::from_f32(0.),
-                    f16::from_f32(10.),
-                    f16::from_f32(10.)
-                ],
-                [
-                    f16::from_f32(10.),
-                    f16::from_f32(10.),
-                    f16::from_f32(20.),
-                    f16::from_f32(20.)
-                ],
-            ]
+                [0., 0., 10., 10.,], //
+                [10., 10., 20., 20., //
+            ],
+            ],
         );
 
         let box_b = Tensor::from_slice(
@@ -836,7 +808,7 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
 
         // Intersect
@@ -845,16 +817,16 @@ mod tests {
         assert_eq!(intersect.dims(), &[2, 2]);
         assert_eq!(
             intersect
-                .to_vec2::<f16>()
+                .to_vec2::<f32>()
                 .unwrap(),
             vec![
                 [
-                    f16::from_f32(25.), // (0, 0, 10, 10) intersects (5, 5, 15, 15) with area 25
-                    f16::from_f32(0.), // (0, 0, 10, 10) does not intersect (15, 15, 25, 25)
+                    25., // (0, 0, 10, 10) intersects (5, 5, 15, 15) with area 25
+                    0.,  // (0, 0, 10, 10) does not intersect (15, 15, 25, 25)
                 ],
                 [
-                    f16::from_f32(25.), // (10, 10, 20, 20) intersects (5, 5, 15, 15) with area 25
-                    f16::from_f32(25.), // (10, 10, 20, 20) intersects (15, 15, 25, 25) with area 25
+                    25., // (10, 10, 20, 20) intersects (5, 5, 15, 15) with area 25
+                    25., // (10, 10, 20, 20) intersects (15, 15, 25, 25) with area 25
                 ],
             ]
         );
@@ -864,6 +836,7 @@ mod tests {
     fn test_jaccard() {
         // Set up the device and dtype
         let device = Device::Cpu;
+        let dtype = DType::F32;
 
         // Set up the boxes Tensors
         let box_a = Tensor::from_slice(
@@ -875,7 +848,7 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
 
         let box_b = Tensor::from_slice(
@@ -887,7 +860,7 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
 
         // Jaccard
@@ -896,16 +869,16 @@ mod tests {
         assert_eq!(jaccard.dims(), &[2, 2]);
         assert_eq!(
             jaccard
-                .to_vec2::<f16>()
+                .to_vec2::<f32>()
                 .unwrap(),
             vec![
                 [
-                    f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
-                    f16::from_f32(0.),      // = 0 / (100 + 100 - 0)
+                    1. / 7., // = 25 / (100 + 100 - 25)
+                    0.,      // = 0 / (100 + 100 - 0)
                 ],
                 [
-                    f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
-                    f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
+                    1. / 7., // = 25 / (100 + 100 - 25)
+                    1. / 7., // = 25 / (100 + 100 - 25)
                 ],
             ]
         );
@@ -915,6 +888,7 @@ mod tests {
     fn test_overlap_similarity() {
         // Set up the device and dtype
         let device = Device::Cpu;
+        let dtype = DType::F32;
 
         // Set up the boxes Tensors
         let box_a = Tensor::from_slice(
@@ -925,7 +899,7 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
 
         let box_b = Tensor::from_slice(
@@ -937,7 +911,7 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
 
         // Overlap similarity
@@ -945,11 +919,11 @@ mod tests {
 
         assert_eq!(
             similarity
-                .to_vec1::<f16>()
+                .to_vec1::<f32>()
                 .unwrap(),
             vec![
-                f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
-                f16::from_f32(0.),      // = 0  / (100 + 100 - 25)
+                1. / 7., // = 25 / (100 + 100 - 25)
+                0.,      // = 0  / (100 + 100 - 25)
             ]
         );
 
@@ -961,16 +935,16 @@ mod tests {
             &device,
         )
         .unwrap()
-        .to_dtype(DType::F16)
+        .to_dtype(dtype)
         .unwrap();
 
         let same_similarity = overlap_similarity(&box_a, &box_c).unwrap(); // (1)
         assert_eq!(
             same_similarity
-                .to_vec1::<f16>()
+                .to_vec1::<f32>()
                 .unwrap(),
             vec![
-                f16::from_f32(1.), // = 100 / (100 + 100 - 100)
+                1., // = 100 / (100 + 100 - 100)
             ]
         );
     }
@@ -1034,7 +1008,7 @@ mod tests {
     #[test]
     fn test_mask_indices() {
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
 
         let similarities = Tensor::from_slice(
             &[
@@ -1047,7 +1021,7 @@ mod tests {
         .to_dtype(dtype)
         .unwrap(); // (6)
 
-        let threashold = f16::from_f32(0.3);
+        let threashold = 0.3_f32;
 
         let (unmasked, masked) = mask_indices(
             &similarities
@@ -1074,7 +1048,7 @@ mod tests {
     fn test_weighted_non_max_suppression() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
 
         // Setup the config
         let config = BlazeFaceConfig::back(100., 0.65, 0.3);
@@ -1083,12 +1057,12 @@ mod tests {
         let detections = Tensor::from_slice(
             &[
                 0., 0., 0.8, 0.8, // Bounding box
-                0.1, 0.1, // Left eye
-                0.2, 0.2, // Right eye
+                0.1, 0.1, // Right eye
+                0.2, 0.2, // Left eye
                 0.3, 0.3, // Nose
                 0.5, 0.5, // Mouth
-                0.6, 0.6, // Left ear
-                0.7, 0.7, // Right ear
+                0.6, 0.6, // Right ear
+                0.7, 0.7, // Left ear
                 0.8, // Score
             ],
             (1, 17),
@@ -1103,5 +1077,151 @@ mod tests {
             weighted_non_max_suppression(&detections, &config).unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
         assert_eq!(weighted_detections.len(), 1);
+    }
+
+    #[test]
+    fn test_tensors_to_detections_by_1face() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the variables
+        let variables = candle_nn::VarBuilder::from_pth(
+            "src/blaze_face/data/blazeface.pth",
+            dtype,
+            &device,
+        )
+        .unwrap();
+
+        // Load the anchors
+        let anchors = Tensor::read_npy("src/blaze_face/data/anchors.npy") // (896, 4)
+            .unwrap()
+            .to_dtype(dtype)
+            .unwrap()
+            .to_device(&device)
+            .unwrap();
+
+        // Load the model
+        let model = BlazeFace::load(
+            ModelType::Front,
+            variables,
+            anchors,
+            100.,
+            0.65,
+            0.3,
+        )
+        .unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/1face.png").unwrap();
+        let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap();
+
+        // Call forward method and get the output
+        let (raw_scores, raw_boxes) = model.forward(&input).unwrap();
+        // raw_scores: (batch_size, 896, 1), raw_boxes: (batch_size, 896, 16)
+
+        // Tensors to detections
+        let detections = tensors_to_detections(
+            &raw_boxes,
+            &raw_scores,
+            &model.anchors,
+            &model.config,
+        )
+        .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
+
+        assert_eq!(detections.len(), 1);
+
+        let scores = detections[0]
+            .i((.., 16))
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+        assert_eq!(
+            scores,
+            vec![0.41455078, 0.4375, 0.42236328, 0.4128418,]
+        );
+    }
+
+    #[test]
+    fn test_predict_on_batch_by_1face() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the variables
+        let variables = candle_nn::VarBuilder::from_pth(
+            "src/blaze_face/data/blazeface.pth",
+            dtype,
+            &device,
+        )
+        .unwrap();
+
+        // Load the anchors
+        let anchors = Tensor::read_npy("src/blaze_face/data/anchors.npy") // (896, 4)
+            .unwrap()
+            .to_dtype(dtype)
+            .unwrap()
+            .to_device(&device)
+            .unwrap();
+        assert_eq!(anchors.dims(), &[896, 4]);
+
+        // Load the model
+        let model = BlazeFace::load(
+            ModelType::Front,
+            variables,
+            anchors,
+            100.,
+            0.75,
+            0.3,
+        )
+        .unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/1face.png").unwrap();
+        let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap();
+
+        // Predict on batch
+        let detections = model
+            .predict_on_batch(&input)
+            .unwrap(); // Vec<Vec<(detected_faces, 17)>> with length:batch_size
+
+        assert_eq!(detections.len(), 1);
+        assert_eq!(detections[0].len(), 1);
+        assert_eq!(detections[0][0].dims(), &[1, 17]);
+    }
+
+    fn convert_image_to_tensor(
+        image: &image::DynamicImage,
+        device: &Device,
+    ) -> Result<Tensor> {
+        let pixels = image.to_rgb32f().to_vec();
+
+        let image = Tensor::from_slice(
+            &pixels,
+            (
+                3,
+                image.height() as usize,
+                image.width() as usize,
+            ),
+            device,
+        )?; // (3, resolution, resolution) in range [0., 1.]
+
+        image
+            .broadcast_mul(&Tensor::from_slice(
+                &[2_f32],
+                1,
+                device,
+            )?)? // (3, resolution, resolution) in range [0., 2.]
+            .broadcast_sub(&Tensor::from_slice(
+                &[1_f32],
+                1,
+                device,
+            )?) // (3, resolution, resolution) in range [-1., 1.]
     }
 }

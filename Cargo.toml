@@ -19,4 +19,6 @@ candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.3.0", features = [
     "cuda",
 ] }
-half = "2.3.1"
+
+[dev-dependencies]
+image = "0.24.7"

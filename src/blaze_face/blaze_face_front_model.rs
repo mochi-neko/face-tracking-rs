@@ -1,7 +1,7 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-use candle_core::{Module, Result, Tensor};
+use candle_core::{Error, Module, Result, Shape, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, VarBuilder};
 
 use super::{
@@ -627,10 +627,25 @@ impl BlazeFaceFrontModel {
 impl BlazeFaceModel for BlazeFaceFrontModel {
     fn forward(
         &self,
-        xs: &Tensor, // (batch, 3, 128, 128)
+        input: &Tensor, // (batch, 3, 128, 128)
     ) -> Result<(Tensor, Tensor)> // score:(batch, 896, 1), boxes:(batch, 896, 16)
     {
-        let x = xs
+        let batch_size = input.dims()[0];
+        if input.dims()
+            != [
+                batch_size, 3, 128, 128,
+            ]
+        {
+            return Result::Err(Error::ShapeMismatchBinaryOp {
+                lhs: input.shape().clone(),
+                rhs: Shape::from(&[
+                    batch_size, 3, 128, 128,
+                ]),
+                op: "forward",
+            });
+        }
+
+        let x = input
             .pad_with_zeros(2, 1, 2)? // height padding
             .pad_with_zeros(3, 1, 2)?; // width padding
 
