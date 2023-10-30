@@ -306,7 +306,7 @@ impl BlazeFace {
     fn weighted_non_max_suppression(
         &self,
         detections: &Tensor, // (num_detections, 17)
-    ) -> Result<Vec<Tensor>> // Vec<Tensor>
+    ) -> Result<Vec<Tensor>> // Vector of weighted detections by non-maximum suppression
     {
         if detections.elem_count() == 0 {
             return Ok(Vec::new());
@@ -337,10 +337,39 @@ impl BlazeFace {
             remaining = unmasked_indices; // (unmasked_indices)
 
             let mut weighted_detection = detection.clone(); // (17)
-            if overlapping.elem_count() > 1 {}
+            if overlapping.elem_count() > 1 {
+                let overlapped = detections.i(&overlapping)?;
+                let coordinates = overlapped // (overlapped, 17)
+                    .i((.., 0..16))?; // (overlapped, 16)
+                let scores = overlapped.i((.., 16))?; // (overlapped, 1)
+                let total_score = scores.sum(0)?; // (1)
+
+                let weighted_coordinates = coordinates
+                    .broadcast_mul(&scores)? // (overlapped, 16)
+                    .sum(0)? // (16)
+                    .broadcast_div(&total_score)?; // (16)
+
+                let weighted_score = total_score.div(&Tensor::from_slice(
+                    &[f16::from_f32(
+                        overlapping.elem_count() as f32,
+                    )],
+                    1,
+                    detections.device(),
+                )?)?; // (1)
+
+                weighted_detection = Tensor::cat(
+                    &[
+                        weighted_coordinates,
+                        weighted_score,
+                    ],
+                    0,
+                )?; // (17)
+            }
+
+            output.push(weighted_detection);
         }
 
-        unimplemented!()
+        Ok(output)
     }
 
     fn argsort_by_score(
@@ -1030,5 +1059,65 @@ mod tests {
                 .unwrap(),
             vec![0, 1, 2, 3]
         );
+    }
+
+    #[test]
+    fn test_weighted_non_max_suppression() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F16;
+        let batch_size = 1;
+
+        // Load the variables
+        let variables = candle_nn::VarBuilder::from_pth(
+            "src/blaze_face/data/blazefaceback.pth",
+            dtype,
+            &device,
+        )
+        .unwrap();
+
+        // Load the anchors
+        let anchors = Tensor::read_npy("src/blaze_face/data/anchorsback.npy")
+            .unwrap()
+            .to_dtype(dtype)
+            .unwrap(); // (896, 4)
+
+        // Load the model
+        let model = BlazeFace::load(
+            ModelType::Back,
+            variables,
+            anchors,
+            100.,
+            0.65,
+            0.3,
+        )
+        .unwrap();
+
+        // Set up the input Tensor
+        let input = Tensor::rand(
+            0.,
+            1.,
+            (batch_size, 3, 256, 256),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(dtype)
+        .unwrap(); // (batch_size, 3, 256, 256)
+
+        // Call forward method and get the output
+        let (raw_scores, raw_boxes) = model.forward(&input).unwrap();
+        // raw_scores: (batch_size, 896, 1), raw_boxes: (batch_size, 896, 16)
+
+        // Tensors to detections
+        let detections = model
+            .tensors_to_detections(&raw_boxes, &raw_scores)
+            .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
+
+        // Calculate weighted non-maximum suppression
+        let weighted_detections = model
+            .weighted_non_max_suppression(&detections[0])
+            .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
+
+        assert_eq!(weighted_detections.len(), 0);
     }
 }
