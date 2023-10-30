@@ -293,69 +293,6 @@ fn unmasked_indices(
     Tensor::stack(&indices_tensor, 0) // (batch_size, num_unmasked)
 }
 
-fn weighted_non_max_suppression(
-    detections: &Tensor, // (num_detections, 17)
-    config: &BlazeFaceConfig,
-) -> Result<Vec<Tensor>> // Vector of weighted detections by non-maximum suppression
-{
-    if detections.elem_count() == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut output = Vec::new();
-
-    let mut remaining = argsort_by_score(detections)?; // (num_detections)
-    while remaining.elem_count() > 0 {
-        let detection = detections.i(remaining.to_vec1::<u32>()?[0] as usize)?; // (17)
-
-        let first_box = detection.i(0..4)?; // (4)
-        let other_box = detections.i((&remaining, ..4))?; // (remainings, 4)
-
-        let ious = overlap_similarity(&first_box, &other_box)?; // (remainings)
-
-        let mask = ious.gt(config.min_suppression_threshold)?; // (unmasked)
-
-        let (unmasked_indices, masked_indices) = mask_indices(&mask)?; // (unmasked_indices), (masked_indices)
-
-        let overlapping = masked_indices; // (masked_indices)
-        remaining = unmasked_indices; // (unmasked_indices)
-
-        let mut weighted_detection = detection.clone(); // (17)
-        if overlapping.elem_count() > 1 {
-            let overlapped = detections.i(&overlapping)?;
-            let coordinates = overlapped // (overlapped, 17)
-                .i((.., 0..16))?; // (overlapped, 16)
-            let scores = overlapped.i((.., 16))?; // (overlapped, 1)
-            let total_score = scores.sum(0)?; // (1)
-
-            let weighted_coordinates = coordinates
-                .broadcast_mul(&scores)? // (overlapped, 16)
-                .sum(0)? // (16)
-                .broadcast_div(&total_score)?; // (16)
-
-            let weighted_score = total_score.div(&Tensor::from_slice(
-                &[f16::from_f32(
-                    overlapping.elem_count() as f32,
-                )],
-                1,
-                detections.device(),
-            )?)?; // (1)
-
-            weighted_detection = Tensor::cat(
-                &[
-                    weighted_coordinates,
-                    weighted_score,
-                ],
-                0,
-            )?; // (17)
-        }
-
-        output.push(weighted_detection);
-    }
-
-    Ok(output)
-}
-
 fn argsort_by_score(
     detection: &Tensor, // (num_detections, 17)
 ) -> Result<Tensor> // (num_detections) of DType::U32
@@ -386,7 +323,8 @@ fn argsort_by_score(
 fn overlap_similarity(
     first_box: &Tensor, // (4)
     other_box: &Tensor, // (remainings, 4)
-) -> Result<Tensor> {
+) -> Result<Tensor> // (remainings)
+{
     let first_box = first_box.unsqueeze(0)?; // (1, 4)
 
     jaccard(&first_box, other_box)? // (1, remainings)
@@ -396,7 +334,8 @@ fn overlap_similarity(
 fn jaccard(
     box_a: &Tensor, // (a, 4)
     box_b: &Tensor, // (b, 4)
-) -> Result<Tensor> {
+) -> Result<Tensor> // (a, b)
+{
     let inter = intersect(box_a, box_b)?; // (a, b)
 
     let area_a = box_a
@@ -487,6 +426,72 @@ fn mask_indices(
     let masked = Tensor::from_slice(&masked, masked.len(), mask.device())?;
 
     Ok((unmasked, masked))
+}
+
+fn weighted_non_max_suppression(
+    detections: &Tensor, // (num_detections, 17)
+    config: &BlazeFaceConfig,
+) -> Result<Vec<Tensor>> // Vector of weighted detections by non-maximum suppression
+{
+    if detections.dims()[0] == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut output = Vec::new();
+
+    let mut remaining = argsort_by_score(detections)?; // (num_detections)
+
+    while remaining.dims()[0] > 0 {
+        let detection = detections.i((
+            remaining.to_vec1::<u32>()?[0] as usize,
+            ..,
+        ))?; // (17)
+
+        let first_box = detection.i(0..4)?; // (4)
+        let other_box = detections.i((&remaining, ..4))?; // (remainings - 1, 4)
+
+        let ious = overlap_similarity(&first_box, &other_box)?; // (remainings - 1)
+        let mask = ious.gt(config.min_suppression_threshold)?; // (remainings - 1) of Dtype::U8
+        let (overlapping, others) = mask_indices(&mask)?; // (unmasked_indices), (masked_indices)
+
+        remaining = others; // (unmasked_indices)
+
+        let mut weighted_detection = detection.clone(); // (17)
+
+        if overlapping.dims()[0] > 1 {
+            let overlapped = detections.i((&overlapping, ..))?; // (overlapped, 17)
+            let coordinates = overlapped // (overlapped, 17)
+                .i((.., 0..16))?; // (overlapped, 16)
+            let scores = overlapped.i((.., 16))?; // (overlapped, 1)
+            let total_score = scores.sum(0)?; // (1)
+            let overlapped_count = Tensor::from_slice(
+                &[f16::from_f32(
+                    overlapping.dims()[0] as f32,
+                )],
+                1,
+                detections.device(),
+            )?; // (1)
+
+            let weighted_coordinates = coordinates
+                .broadcast_mul(&scores)? // (overlapped, 16)
+                .sum(0)? // (16)
+                .div(&total_score)?; // (16)
+
+            let weighted_score = total_score.div(&overlapped_count)?; // (1)
+
+            weighted_detection = Tensor::cat(
+                &[
+                    weighted_coordinates,
+                    weighted_score,
+                ],
+                0,
+            )?; // (17)
+        }
+
+        output.push(weighted_detection);
+    }
+
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -936,16 +941,36 @@ mod tests {
         .unwrap();
 
         // Overlap similarity
-        let overlap_similarity = overlap_similarity(&box_a, &box_b).unwrap(); // (2)
+        let similarity = overlap_similarity(&box_a, &box_b).unwrap(); // (2)
 
-        assert_eq!(overlap_similarity.dims(), &[2]);
         assert_eq!(
-            overlap_similarity
+            similarity
                 .to_vec1::<f16>()
                 .unwrap(),
             vec![
                 f16::from_f32(1. / 7.), // = 25 / (100 + 100 - 25)
                 f16::from_f32(0.),      // = 0  / (100 + 100 - 25)
+            ]
+        );
+
+        let box_c = Tensor::from_slice(
+            &[
+                0., 0., 10., 10., //
+            ],
+            (1, 4),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(DType::F16)
+        .unwrap();
+
+        let same_similarity = overlap_similarity(&box_a, &box_c).unwrap(); // (1)
+        assert_eq!(
+            same_similarity
+                .to_vec1::<f16>()
+                .unwrap(),
+            vec![
+                f16::from_f32(1.), // = 100 / (100 + 100 - 100)
             ]
         );
     }
