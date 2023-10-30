@@ -4,9 +4,6 @@
 use half::f16;
 
 pub struct BlazeFaceConfig {
-    pub(crate) num_classes: usize,
-    pub(crate) num_anchors: usize,
-    pub(crate) num_coords: usize,
     pub(crate) x_scale: f16,
     pub(crate) y_scale: f16,
     pub(crate) h_scale: f16,
@@ -23,9 +20,6 @@ impl BlazeFaceConfig {
         min_suppression_threshold: f32,
     ) -> BlazeFaceConfig {
         BlazeFaceConfig {
-            num_classes: 1,
-            num_anchors: 896,
-            num_coords: 16,
             x_scale: f16::from_f32(256.),
             y_scale: f16::from_f32(256.),
             h_scale: f16::from_f32(256.),
@@ -42,9 +36,6 @@ impl BlazeFaceConfig {
         min_suppression_threshold: f32,
     ) -> BlazeFaceConfig {
         BlazeFaceConfig {
-            num_classes: 1,
-            num_anchors: 896,
-            num_coords: 16,
             x_scale: f16::from_f32(128.),
             y_scale: f16::from_f32(128.),
             h_scale: f16::from_f32(128.),

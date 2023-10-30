@@ -72,7 +72,7 @@ mod tests {
         // Set up the convolution parameters
         let conv1_weight =
             Tensor::rand(0., 1., (channels, 1, 3, 3), &device).unwrap();
-        let conv1_bias = Tensor::rand(0., 1., (channels), &device).unwrap();
+        let conv1_bias = Tensor::rand(0., 1., channels, &device).unwrap();
 
         let conv2_weight = Tensor::rand(
             0.,
@@ -81,7 +81,7 @@ mod tests {
             &device,
         )
         .unwrap();
-        let conv2_bias = Tensor::rand(0., 1., (channels), &device).unwrap();
+        let conv2_bias = Tensor::rand(0., 1., channels, &device).unwrap();
 
         // Instantiate the FinalBlazeBlock
         let block = FinalBlazeBlock::new(
