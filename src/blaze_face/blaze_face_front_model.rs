@@ -5,8 +5,8 @@ use candle_core::{Error, Module, Result, Shape, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, VarBuilder};
 
 use super::{
-    blaze_block::BlazeBlock, blaze_face::BlazeFaceModel,
-    conv2d_parameters::Conv2dParameters,
+    blaze_block::{BlazeBlock, StrideType},
+    blaze_face::BlazeFaceModel,
 };
 
 pub(crate) struct BlazeFaceFrontModel {
@@ -20,7 +20,7 @@ pub(crate) struct BlazeFaceFrontModel {
 }
 
 impl BlazeFaceFrontModel {
-    pub(crate) fn load(variables: VarBuilder) -> Result<BlazeFaceFrontModel> {
+    pub(crate) fn load(variables: VarBuilder) -> Result<Self> {
         let head = Conv2d::new(
             variables.get_with_hints(
                 (24, 3, 5, 5),
@@ -28,501 +28,179 @@ impl BlazeFaceFrontModel {
                 candle_nn::init::ZERO,
             )?,
             Some(variables.get_with_hints(
-                (24,),
+                24,
                 "backbone1.0.bias",
                 candle_nn::init::ZERO,
             )?),
             Conv2dConfig {
-                padding: 0,
                 stride: 2,
-                dilation: 1,
-                groups: 1,
+                ..Default::default()
             },
         );
 
         let backbone_1 = vec![
-            BlazeBlock::new(
+            BlazeBlock::load(
                 24,
                 24,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (24, 1, 3, 3),
-                        "backbone1.2.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (24,),
-                        "backbone1.2.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (24, 24, 1, 1),
-                        "backbone1.2.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (24,),
-                        "backbone1.2.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.2.convs.0.weight",
+                "backbone1.2.convs.0.bias",
+                "backbone1.2.convs.1.weight",
+                "backbone1.2.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 24,
                 28,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (24, 1, 3, 3),
-                        "backbone1.3.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (24,),
-                        "backbone1.3.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (28, 24, 1, 1),
-                        "backbone1.3.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (28,),
-                        "backbone1.3.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.3.convs.0.weight",
+                "backbone1.3.convs.0.bias",
+                "backbone1.3.convs.1.weight",
+                "backbone1.3.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 28,
                 32,
-                3,
-                2, // stride = 2
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (28, 1, 3, 3),
-                        "backbone1.4.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (28,),
-                        "backbone1.4.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (32, 28, 1, 1),
-                        "backbone1.4.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (32,),
-                        "backbone1.4.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Double, // stride = 2
+                &variables,
+                "backbone1.4.convs.0.weight",
+                "backbone1.4.convs.0.bias",
+                "backbone1.4.convs.1.weight",
+                "backbone1.4.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 32,
                 36,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (32, 1, 3, 3),
-                        "backbone1.5.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (32,),
-                        "backbone1.5.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (36, 32, 1, 1),
-                        "backbone1.5.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (36,),
-                        "backbone1.5.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.5.convs.0.weight",
+                "backbone1.5.convs.0.bias",
+                "backbone1.5.convs.1.weight",
+                "backbone1.5.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 36,
                 42,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (36, 1, 3, 3),
-                        "backbone1.6.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (36,),
-                        "backbone1.6.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (42, 36, 1, 1),
-                        "backbone1.6.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (42,),
-                        "backbone1.6.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.6.convs.0.weight",
+                "backbone1.6.convs.0.bias",
+                "backbone1.6.convs.1.weight",
+                "backbone1.6.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 42,
                 48,
-                3,
-                2, // stride = 2
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (42, 1, 3, 3),
-                        "backbone1.7.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (42,),
-                        "backbone1.7.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (48, 42, 1, 1),
-                        "backbone1.7.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (48,),
-                        "backbone1.7.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Double, // stride = 2
+                &variables,
+                "backbone1.7.convs.0.weight",
+                "backbone1.7.convs.0.bias",
+                "backbone1.7.convs.1.weight",
+                "backbone1.7.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 48,
                 56,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (48, 1, 3, 3),
-                        "backbone1.8.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (48,),
-                        "backbone1.8.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (56, 48, 1, 1),
-                        "backbone1.8.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (56,),
-                        "backbone1.8.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.8.convs.0.weight",
+                "backbone1.8.convs.0.bias",
+                "backbone1.8.convs.1.weight",
+                "backbone1.8.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 56,
                 64,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (56, 1, 3, 3),
-                        "backbone1.9.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (56,),
-                        "backbone1.9.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (64, 56, 1, 1),
-                        "backbone1.9.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (64,),
-                        "backbone1.9.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.9.convs.0.weight",
+                "backbone1.9.convs.0.bias",
+                "backbone1.9.convs.1.weight",
+                "backbone1.9.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 64,
                 72,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (64, 1, 3, 3),
-                        "backbone1.10.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (64,),
-                        "backbone1.10.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (72, 64, 1, 1),
-                        "backbone1.10.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (72,),
-                        "backbone1.10.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.10.convs.0.weight",
+                "backbone1.10.convs.0.bias",
+                "backbone1.10.convs.1.weight",
+                "backbone1.10.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 72,
                 80,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (72, 1, 3, 3),
-                        "backbone1.11.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (72,),
-                        "backbone1.11.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (80, 72, 1, 1),
-                        "backbone1.11.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (80,),
-                        "backbone1.11.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.11.convs.0.weight",
+                "backbone1.11.convs.0.bias",
+                "backbone1.11.convs.1.weight",
+                "backbone1.11.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 80,
                 88,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (80, 1, 3, 3),
-                        "backbone1.12.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (80,),
-                        "backbone1.12.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (88, 80, 1, 1),
-                        "backbone1.12.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (88,),
-                        "backbone1.12.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone1.12.convs.0.weight",
+                "backbone1.12.convs.0.bias",
+                "backbone1.12.convs.1.weight",
+                "backbone1.12.convs.1.bias",
             )?,
         ];
 
         let backbone_2 = vec![
-            BlazeBlock::new(
+            BlazeBlock::load(
                 88,
                 96,
-                3,
-                2, // stride = 2
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (88, 1, 3, 3),
-                        "backbone2.0.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (88,),
-                        "backbone2.0.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 88, 1, 1),
-                        "backbone2.0.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.0.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Double, // stride = 2
+                &variables,
+                "backbone2.0.convs.0.weight",
+                "backbone2.0.convs.0.bias",
+                "backbone2.0.convs.1.weight",
+                "backbone2.0.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 96,
                 96,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 1, 3, 3),
-                        "backbone2.1.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.1.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 96, 1, 1),
-                        "backbone2.1.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.1.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone2.1.convs.0.weight",
+                "backbone2.1.convs.0.bias",
+                "backbone2.1.convs.1.weight",
+                "backbone2.1.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 96,
                 96,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 1, 3, 3),
-                        "backbone2.2.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.2.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 96, 1, 1),
-                        "backbone2.2.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.2.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone2.2.convs.0.weight",
+                "backbone2.2.convs.0.bias",
+                "backbone2.2.convs.1.weight",
+                "backbone2.2.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 96,
                 96,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 1, 3, 3),
-                        "backbone2.3.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.3.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 96, 1, 1),
-                        "backbone2.3.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.3.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone2.3.convs.0.weight",
+                "backbone2.3.convs.0.bias",
+                "backbone2.3.convs.1.weight",
+                "backbone2.3.convs.1.bias",
             )?,
-            BlazeBlock::new(
+            BlazeBlock::load(
                 96,
                 96,
-                3,
-                1,
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 1, 3, 3),
-                        "backbone2.4.convs.0.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.4.convs.0.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
-                Conv2dParameters {
-                    weight: variables.get_with_hints(
-                        (96, 96, 1, 1),
-                        "backbone2.4.convs.1.weight",
-                        candle_nn::init::ZERO,
-                    )?,
-                    bias: Some(variables.get_with_hints(
-                        (96,),
-                        "backbone2.4.convs.1.bias",
-                        candle_nn::init::ZERO,
-                    )?),
-                },
+                StrideType::Single,
+                &variables,
+                "backbone2.4.convs.0.weight",
+                "backbone2.4.convs.0.bias",
+                "backbone2.4.convs.1.weight",
+                "backbone2.4.convs.1.bias",
             )?,
         ];
 
@@ -590,7 +268,7 @@ impl BlazeFaceFrontModel {
             },
         );
 
-        Ok(BlazeFaceFrontModel {
+        Ok(Self {
             head,
             backbone_1,
             backbone_2,
@@ -603,9 +281,9 @@ impl BlazeFaceFrontModel {
 
     fn forward_backbone_1(
         &self,
-        x: &Tensor,
+        input: &Tensor,
     ) -> Result<Tensor> {
-        let mut x = x.clone();
+        let mut x = input.clone();
         for block in &self.backbone_1 {
             x = block.forward(&x)?;
         }
@@ -614,9 +292,9 @@ impl BlazeFaceFrontModel {
 
     fn forward_backbone_2(
         &self,
-        x: &Tensor,
+        input: &Tensor,
     ) -> Result<Tensor> {
-        let mut x = x.clone();
+        let mut x = input.clone();
         for block in &self.backbone_2 {
             x = block.forward(&x)?;
         }
@@ -648,8 +326,6 @@ impl BlazeFaceModel for BlazeFaceFrontModel {
         let x = input
             .pad_with_zeros(2, 1, 2)? // height padding
             .pad_with_zeros(3, 1, 2)?; // width padding
-
-        let batch_size = x.dims()[0];
 
         let x = self.head.forward(&x)?; // (batch, 24, 64, 64)
         let x = x.relu()?;
@@ -696,7 +372,7 @@ mod tests {
     fn test_forward() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F16;
+        let dtype = DType::F32;
         let batch_size = 1;
 
         // Load the variables
@@ -716,12 +392,14 @@ mod tests {
             dtype,
             &device,
         )
+        .unwrap()
+        .to_dtype(dtype)
         .unwrap();
 
         // Call forward method and get the output
         let output = model.forward(&input).unwrap();
 
-        assert_eq!(output.0.dims(), &[batch_size, 896, 1,]);
-        assert_eq!(output.1.dims(), &[batch_size, 896, 16,]);
+        assert_eq!(output.0.dims(), &[batch_size, 896, 1]);
+        assert_eq!(output.1.dims(), &[batch_size, 896, 16]);
     }
 }

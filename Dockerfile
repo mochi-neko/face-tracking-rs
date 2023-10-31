@@ -32,7 +32,7 @@ RUN rustup component add \
     cargo-watch
 # Set environment variables for Rust logging
 ENV RUST_LOG=info
-ENV RURT_BACKTRACE=1
+ENV RURT_BACKTRACE=full
 
 # Set working directory
 WORKDIR /workspace
