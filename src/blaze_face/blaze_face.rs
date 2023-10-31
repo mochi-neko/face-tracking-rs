@@ -108,15 +108,18 @@ impl BlazeFace {
 
         let mut filtered_detections = Vec::new();
         for detection in detections {
-            let faces = weighted_non_max_suppression(&detection, &self.config)?; // (detected_faces, 17)
+            let faces = weighted_non_max_suppression(
+                &detection.contiguous()?,
+                &self.config,
+            )?; // Vec<(17)> with length:detected_faces
             if !faces.is_empty() {
                 filtered_detections.push(faces);
             } else {
                 let zeros = Tensor::zeros(
-                    (0, 17),
+                    17,
                     detection.dtype(),
                     detection.device(),
-                )?; // (0, 17)
+                )?; // (17)
                 filtered_detections.push(vec![zeros]);
             }
         }
@@ -423,6 +426,16 @@ fn weighted_non_max_suppression(
 {
     if detections.dims()[0] == 0 {
         return Ok(Vec::new());
+    }
+    if detections.dims()[1] != 17 {
+        return Err(Error::ShapeMismatchBinaryOp {
+            lhs: detections.shape().clone(),
+            rhs: Shape::from_dims(&[
+                detections.dims()[0],
+                17,
+            ]),
+            op: "weighted_non_max_suppression",
+        });
     }
 
     let mut output = Vec::new();
@@ -1093,37 +1106,13 @@ mod tests {
     }
 
     #[test]
-    fn test_tensors_to_detections_by_1face() {
+    fn test_tensors_to_detections_by_1face_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
         let dtype = DType::F32;
 
-        // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazeface.pth",
-            dtype,
-            &device,
-        )
-        .unwrap();
-
-        // Load the anchors
-        let anchors = Tensor::read_npy("src/blaze_face/data/anchors.npy") // (896, 4)
-            .unwrap()
-            .to_dtype(dtype)
-            .unwrap()
-            .to_device(&device)
-            .unwrap();
-
         // Load the model
-        let model = BlazeFace::load(
-            ModelType::Front,
-            &variables,
-            anchors,
-            100.,
-            0.2,
-            0.3,
-        )
-        .unwrap();
+        let model = load_model(ModelType::Front, &device, dtype).unwrap();
 
         // Load the test image
         let image = image::open("test_data/1face.png").unwrap();
@@ -1146,15 +1135,59 @@ mod tests {
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
         assert_eq!(detections.len(), 1);
-
-        let scores = detections[0]
-            .i((.., 16))
-            .unwrap()
-            .to_vec1::<f32>()
-            .unwrap();
         assert_eq!(
-            scores,
-            vec![0.41455078, 0.4375, 0.42236328, 0.4128418,]
+            detections[0]
+                .i((.., 16))
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap(),
+            vec![0.76187944]
+        );
+    }
+
+    #[test]
+    fn test_tensors_to_detections_by_4faces_back() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Back, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/4faces.png")
+            .unwrap()
+            .resize_exact(
+                256,
+                256,
+                image::imageops::FilterType::Nearest,
+            );
+        let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap();
+
+        // Call forward method and get the output
+        let (raw_boxes, raw_scores) = model.forward(&input).unwrap();
+        // raw_boxes: (batch_size, 896, 16), raw_scores: (batch_size, 896, 1)
+
+        // Tensors to detections
+        let detections = tensors_to_detections(
+            &raw_boxes,
+            &raw_scores,
+            &model.anchors,
+            &model.config,
+        )
+        .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
+
+        assert_eq!(detections.len(), 1);
+        assert_eq!(
+            detections[0]
+                .i((.., 16))
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap(),
+            vec![0.8581102, 0.8371221, 0.6723021]
         );
     }
 
@@ -1164,33 +1197,8 @@ mod tests {
         let device = Device::Cpu;
         let dtype = DType::F32;
 
-        // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazeface.pth",
-            dtype,
-            &device,
-        )
-        .unwrap();
-
-        // Load the anchors
-        let anchors = Tensor::read_npy("src/blaze_face/data/anchors.npy") // (896, 4)
-            .unwrap()
-            .to_dtype(dtype)
-            .unwrap()
-            .to_device(&device)
-            .unwrap();
-        assert_eq!(anchors.dims(), &[896, 4]);
-
         // Load the model
-        let model = BlazeFace::load(
-            ModelType::Front,
-            &variables,
-            anchors,
-            100.,
-            0.4,
-            0.3,
-        )
-        .unwrap();
+        let model = load_model(ModelType::Front, &device, dtype).unwrap();
 
         // Load the test image
         let image = image::open("test_data/1face.png").unwrap();
@@ -1202,11 +1210,175 @@ mod tests {
         // Predict on batch
         let detections = model
             .predict_on_batch(&input)
-            .unwrap(); // Vec<Vec<(detected_faces, 17)>> with length:batch_size
+            .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
 
-        assert_eq!(detections.len(), 1);
-        assert_eq!(detections[0].len(), 1);
-        assert_eq!(detections[0][0].dims(), &[1, 17]);
+        assert_eq!(detections.len(), 1); // batch_size
+        assert_eq!(detections[0].len(), 1); // detectec faces
+        assert_eq!(detections[0][0].dims(), &[17]); // bounding box, keypoints and score
+        assert_eq!(
+            detections[0][0]
+                .i(16)
+                .unwrap()
+                .to_vec0::<f32>()
+                .unwrap(),
+            0.76187944
+        );
+    }
+
+    #[test]
+    fn test_color_order() {
+        let device = Device::Cpu;
+
+        let colors = vec![
+            0.1, 0.2, 0.3, // (0, 0)
+            0.4, 0.5, 0.6, // (1, 0)
+            0.7, 0.8, 0.9, // (0, 1)
+            0.11, 0.12, 0.13, // (1, 1)
+        ];
+
+        let tensor = Tensor::from_vec(colors, (2, 2, 3), &device).unwrap();
+
+        assert_eq!(
+            tensor
+                .to_vec3::<f64>()
+                .unwrap(),
+            vec![
+                vec![
+                    vec![0.1, 0.2, 0.3],
+                    vec![0.4, 0.5, 0.6],
+                ],
+                vec![
+                    vec![0.7, 0.8, 0.9],
+                    vec![0.11, 0.12, 0.13],
+                ],
+            ]
+        );
+
+        let tensor = tensor
+            .permute((2, 0, 1))
+            .unwrap();
+
+        assert_eq!(
+            tensor
+                .to_vec3::<f64>()
+                .unwrap(),
+            vec![
+                vec![
+                    // R
+                    vec![
+                        // W = 0
+                        0.1, // H = 0
+                        0.4  // H = 1
+                    ],
+                    vec![
+                        // W = 1
+                        0.7,  // H = 0
+                        0.11  // H = 1
+                    ],
+                ],
+                vec![
+                    // G
+                    vec![0.2, 0.5],
+                    vec![0.8, 0.12],
+                ],
+                vec![
+                    // G
+                    vec![0.3, 0.6],
+                    vec![0.9, 0.13],
+                ],
+            ]
+        );
+
+        let tensor = tensor
+            .permute((0, 2, 1))
+            .unwrap();
+
+        assert_eq!(
+            tensor
+                .to_vec3::<f64>()
+                .unwrap(),
+            vec![
+                vec![
+                    // R
+                    vec![
+                        // H = 0
+                        0.1, // W = 0
+                        0.7  // W = 1
+                    ],
+                    vec![
+                        // H = 1
+                        0.4,  // W = 0
+                        0.11  // W = 1
+                    ],
+                ],
+                vec![
+                    // G
+                    vec![
+                        // H = 0
+                        0.2, // W = 0
+                        0.8  // W = 1
+                    ],
+                    vec![
+                        // H = 1
+                        0.5,  // W = 0
+                        0.12  // W = 1
+                    ],
+                ],
+                vec![
+                    // B
+                    vec![
+                        // H = 0
+                        0.3, // W = 0
+                        0.9  // W = 1
+                    ],
+                    vec![
+                        // H = 1
+                        0.6,  // W = 0
+                        0.13  // W = 1
+                    ],
+                ],
+            ]
+        );
+    }
+
+    fn load_model(
+        model_type: ModelType,
+        device: &Device,
+        dtype: DType,
+    ) -> Result<BlazeFace> {
+        let pth_path = match model_type {
+            | ModelType::Back => "src/blaze_face/data/blazefaceback.pth",
+            | ModelType::Front => "src/blaze_face/data/blazeface.pth",
+        };
+
+        // Load the variables
+        let variables =
+            candle_nn::VarBuilder::from_pth(pth_path, dtype, device)?;
+
+        let anchor_path = match model_type {
+            | ModelType::Back => "src/blaze_face/data/anchorsback.npy",
+            | ModelType::Front => "src/blaze_face/data/anchors.npy",
+        };
+
+        // Load the anchors
+        let anchors = Tensor::read_npy(anchor_path)? // (896, 4)
+            .to_dtype(dtype)?
+            .to_device(device)?;
+
+        let min_score_thresh = match model_type {
+            | ModelType::Back => 0.65,
+            | ModelType::Front => 0.75,
+        };
+
+        // Load the model
+        BlazeFace::load(
+            model_type,
+            &variables,
+            anchors,
+            100.,
+            min_score_thresh,
+            0.3,
+        )
     }
 
     fn convert_image_to_tensor(
@@ -1215,26 +1387,26 @@ mod tests {
     ) -> Result<Tensor> {
         let pixels = image.to_rgb32f().to_vec();
 
-        let image = Tensor::from_vec(
+        Tensor::from_vec(
             pixels,
             (
-                3,
-                image.height() as usize,
                 image.width() as usize,
+                image.height() as usize,
+                3,
             ),
             device,
-        )?; // in range [0., 1.]
-
-        image
-            .broadcast_mul(&Tensor::from_slice(
-                &[2_f32],
-                1,
-                device,
-            )?)? //in range [0., 2.]
-            .broadcast_sub(&Tensor::from_slice(
-                &[1_f32],
-                1,
-                device,
-            )?) // in range [-1., 1.]
+        )? // (width, height, channel = 3) in range [0., 1.]
+        .permute((2, 1, 0))? // (3, height, width) in range [0., 1.]
+        .contiguous()?
+        .broadcast_mul(&Tensor::from_slice(
+            &[2_f32],
+            1,
+            device,
+        )?)? // (3, height, width) in range [0., 2.]
+        .broadcast_sub(&Tensor::from_slice(
+            &[1_f32],
+            1,
+            device,
+        )?) // (3, height, width) in range [-1., 1.]
     }
 }
