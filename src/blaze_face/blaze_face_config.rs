@@ -1,11 +1,13 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
+use candle_core::{Device, Result, Tensor};
+
 pub struct BlazeFaceConfig {
-    pub(crate) x_scale: f32,
-    pub(crate) y_scale: f32,
-    pub(crate) h_scale: f32,
-    pub(crate) w_scale: f32,
+    pub(crate) x_scale: Tensor,
+    pub(crate) y_scale: Tensor,
+    pub(crate) h_scale: Tensor,
+    pub(crate) w_scale: Tensor,
     pub(crate) score_clipping_thresh: f32,
     pub(crate) min_score_thresh: f32,
     pub(crate) min_suppression_threshold: f32,
@@ -16,31 +18,33 @@ impl BlazeFaceConfig {
         score_clipping_thresh: f32,
         min_score_thresh: f32,
         min_suppression_threshold: f32,
-    ) -> BlazeFaceConfig {
-        BlazeFaceConfig {
-            x_scale: 256.,
-            y_scale: 256.,
-            h_scale: 256.,
-            w_scale: 256.,
+        device: &Device,
+    ) -> Result<Self> {
+        Ok(Self {
+            x_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
+            y_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
+            h_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
+            w_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
             score_clipping_thresh,
             min_score_thresh,
             min_suppression_threshold,
-        }
+        })
     }
 
     pub(crate) fn front(
         score_clipping_thresh: f32,
         min_score_thresh: f32,
         min_suppression_threshold: f32,
-    ) -> BlazeFaceConfig {
-        BlazeFaceConfig {
-            x_scale: 128.,
-            y_scale: 128.,
-            h_scale: 128.,
-            w_scale: 128.,
+        device: &Device,
+    ) -> Result<Self> {
+        Ok(Self {
+            x_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
+            y_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
+            h_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
+            w_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
             score_clipping_thresh,
             min_score_thresh,
             min_suppression_threshold,
-        }
+        })
     }
 }

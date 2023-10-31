@@ -20,7 +20,7 @@ pub(crate) struct BlazeFaceFrontModel {
 }
 
 impl BlazeFaceFrontModel {
-    pub(crate) fn load(variables: VarBuilder) -> Result<Self> {
+    pub(crate) fn load(variables: &VarBuilder) -> Result<Self> {
         let head = Conv2d::new(
             variables.get_with_hints(
                 (24, 3, 5, 5),
@@ -306,7 +306,7 @@ impl BlazeFaceModel for BlazeFaceFrontModel {
     fn forward(
         &self,
         input: &Tensor, // (batch, 3, 128, 128)
-    ) -> Result<(Tensor, Tensor)> // score:(batch, 896, 1), boxes:(batch, 896, 16)
+    ) -> Result<(Tensor, Tensor)> // coodinates:(batch, 896, 16), score:(batch, 896, 1),
     {
         let batch_size = input.dims()[0];
         if input.dims()
@@ -359,7 +359,7 @@ impl BlazeFaceModel for BlazeFaceFrontModel {
 
         let r = Tensor::cat(&[r1, r2], 1)?; // (batch, 896, 16)
 
-        Ok((c, r))
+        Ok((r, c))
     }
 }
 
@@ -384,7 +384,7 @@ mod tests {
         .unwrap();
 
         // Load the model
-        let model = BlazeFaceFrontModel::load(variables).unwrap();
+        let model = BlazeFaceFrontModel::load(&variables).unwrap();
 
         // Set up the input Tensor
         let input = Tensor::zeros(
@@ -399,7 +399,7 @@ mod tests {
         // Call forward method and get the output
         let output = model.forward(&input).unwrap();
 
-        assert_eq!(output.0.dims(), &[batch_size, 896, 1]);
-        assert_eq!(output.1.dims(), &[batch_size, 896, 16]);
+        assert_eq!(output.0.dims(), &[batch_size, 896, 16]);
+        assert_eq!(output.1.dims(), &[batch_size, 896, 1]);
     }
 }

@@ -159,13 +159,14 @@ impl BlazeBlockSingleStride {
         &self,
         input: &Tensor,
     ) -> Result<Tensor> {
+        let h = input;
+
         let x = if self.channel_pad > 0 {
             input.pad_with_zeros(1, 0, self.channel_pad)? // channel padding
         } else {
             input.clone()
         };
 
-        let h = input;
         let h = self.conv0.forward(h)?;
         let h = self.conv1.forward(&h)?;
         (h + x)?.relu()
@@ -223,7 +224,7 @@ impl BlazeBlockDoubleStride {
         let x = if self.channel_pad > 0 {
             x.pad_with_zeros(1, 0, self.channel_pad)? // channel padding
         } else {
-            x.clone()
+            x
         };
 
         let h = self.conv0.forward(&h)?;

@@ -31,18 +31,16 @@ pub struct BlazeFace {
 impl BlazeFace {
     pub fn load(
         model_type: ModelType,
-        variables: VarBuilder,
+        variables: &VarBuilder,
         anchors: Tensor,
         score_clipping_thresh: f32,
         min_score_thresh: f32,
         min_suppression_threshold: f32,
     ) -> Result<Self> {
-        if !variables
-            .device()
-            .same_device(anchors.device())
-        {
+        let device = variables.device();
+        if !device.same_device(anchors.device()) {
             return Result::Err(Error::DeviceMismatchBinaryOp {
-                lhs: variables.device().location(),
+                lhs: device.location(),
                 rhs: anchors.device().location(),
                 op: "load_blaze_face",
             });
@@ -66,7 +64,8 @@ impl BlazeFace {
                         score_clipping_thresh,
                         min_score_thresh,
                         min_suppression_threshold,
-                    ),
+                        device,
+                    )?,
                 })
             },
             | ModelType::Front => {
@@ -78,7 +77,8 @@ impl BlazeFace {
                         score_clipping_thresh,
                         min_score_thresh,
                         min_suppression_threshold,
-                    ),
+                        device,
+                    )?,
                 })
             },
         }
@@ -87,7 +87,7 @@ impl BlazeFace {
     fn forward(
         &self,
         images: &Tensor, // back:(batch_size, 3, 256, 256) or front:(batch_size, 3, 128, 128)
-    ) -> Result<(Tensor, Tensor)> // score:(batch, 896, 1), boxes:(batch, 896, 16)
+    ) -> Result<(Tensor, Tensor)> // coordinates:(batch, 896, 16), score:(batch, 896, 1)
     {
         self.model.forward(images)
     }
@@ -97,7 +97,7 @@ impl BlazeFace {
         images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
     ) -> Result<Vec<Vec<Tensor>>> // Vec<(detected_faces, 17)> with length:batch_size
     {
-        let (raw_scores, raw_boxes) = self.forward(images)?; // score:(batch, 896, 1), boxes:(batch, 896, 16)
+        let (raw_boxes, raw_scores) = self.forward(images)?; // coordinates:(batch, 896, 16), score:(batch, 896, 1)
 
         let detections = tensors_to_detections(
             &raw_boxes,
@@ -174,13 +174,7 @@ fn decode_boxes(
     config: &BlazeFaceConfig,
 ) -> Result<Tensor> // (batch_size, 896, 16)
 {
-    let boxes = Tensor::zeros_like(raw_boxes)?; // (batch_size, 896, 16)
-
-    let x_scale = Tensor::from_slice(&[config.x_scale], 1, raw_boxes.device())?; // (1)
-    let y_scale = Tensor::from_slice(&[config.y_scale], 1, raw_boxes.device())?; // (1)
-    let w_scale = Tensor::from_slice(&[config.w_scale], 1, raw_boxes.device())?; // (1)
-    let h_scale = Tensor::from_slice(&[config.h_scale], 1, raw_boxes.device())?; // (1)
-
+    let mut coordinates = Vec::new();
     let two = Tensor::from_slice(&[2_f32], 1, raw_boxes.device())?; // (1)
 
     let x_anchor = anchors.i((.., 0))?; // (896)
@@ -190,113 +184,101 @@ fn decode_boxes(
 
     let x_center = raw_boxes
         .i((.., .., 0))? // (batch_size, 896)
-        .broadcast_div(&x_scale)? // / (1)
+        .broadcast_div(&config.x_scale)? // / (1)
         .broadcast_mul(&w_anchor)? // * (896)
         .broadcast_add(&x_anchor)?; // + (896)
                                     // = (batch_size, 896)
 
     let y_center = raw_boxes
         .i((.., .., 1))?
-        .broadcast_div(&y_scale)?
+        .broadcast_div(&config.y_scale)?
         .broadcast_mul(&h_anchor)?
         .broadcast_add(&y_anchor)?;
 
     let w = raw_boxes
         .i((.., .., 2))? // (batch_size, 896)
-        .broadcast_div(&w_scale)? // / (1)
+        .broadcast_div(&config.w_scale)? // / (1)
         .broadcast_mul(&w_anchor)?; // * (896)
                                     // = (batch_size, 896)
 
     let h = raw_boxes
         .i((.., .., 3))?
-        .broadcast_div(&h_scale)?
+        .broadcast_div(&config.h_scale)?
         .broadcast_mul(&h_anchor)?;
 
+    // Bounding box
     let x_min = (&x_center - w.broadcast_div(&two)?)?; // (batch_size, 896)
     let x_max = (&x_center + w.broadcast_div(&two)?)?;
     let y_min = (&y_center - h.broadcast_div(&two)?)?;
     let y_max = (&y_center + h.broadcast_div(&two)?)?;
 
-    // Bounding box
-    boxes
-        .i((.., .., 0))? // (batch_size, 896)
-        .add(&y_min)?; // + (batch_size, 896)
-    boxes
-        .i((.., .., 1))?
-        .add(&x_min)?;
-    boxes
-        .i((.., .., 2))?
-        .add(&y_max)?;
-    boxes
-        .i((.., .., 3))?
-        .add(&x_max)?;
+    coordinates.push(y_min);
+    coordinates.push(x_min);
+    coordinates.push(y_max);
+    coordinates.push(x_max);
 
     // Face keypoints: right_eye, left_eye, nose, mouth, right_ear, left_ear
     for k in 0..6 {
-        let offset = 4 + k * 2;
+        let offset = 4 + k * 2; // 4 = bounding box, 2 = (x, y)
 
         let keypoint_x = raw_boxes
             .i((.., .., offset))? // (batch_size, 896)
-            .broadcast_div(&x_scale)? // / (1)
+            .broadcast_div(&config.x_scale)? // / (1)
             .broadcast_mul(&w_anchor)? // * (896)
             .broadcast_add(&x_anchor)?; // + (896)
                                         // = (batch_size, 896)
 
         let keypoint_y = raw_boxes
             .i((.., .., offset + 1))?
-            .broadcast_div(&y_scale)?
+            .broadcast_div(&config.y_scale)?
             .broadcast_mul(&h_anchor)?
             .broadcast_add(&y_anchor)?;
 
-        // Keypoint
-        boxes
-            .i((.., .., offset))?
-            .add(&keypoint_x)?;
-        boxes
-            .i((.., .., offset + 1))?
-            .add(&keypoint_y)?;
+        coordinates.push(keypoint_x);
+        coordinates.push(keypoint_y);
     }
 
-    Ok(boxes) // (batch_size, 896, 16)
+    Tensor::stack(&coordinates, 2) // (batch_size, 896, 16)
 }
 
 fn unmasked_indices(
-    score: &Tensor, // (batch_size, 896, 1)
+    scores: &Tensor, // (batch_size, 896, 1)
     threshold: f32,
 ) -> Result<Tensor> // (batch_size, num_unmasked) of DType::U32
 {
-    let batch_size = score.dims()[0];
+    let batch_size = scores.dims()[0];
 
-    let mask = score.ge(threshold)?; // (batch_size, 896)
+    let mask = scores
+        .ge(threshold)? // (batch_size, 896, 1) of Dtype::U8
+        .squeeze(2)?; // (batch_size, 896) of Dtype::U8
 
     // Collect unmasked indices
     let mut indices = Vec::new();
     for batch in 0..batch_size {
-        let batch_indices = mask
-            .i((batch, .., 0))? // (896)
-            .to_vec1::<u8>()?
+        let mut batch_indices = Vec::new();
+        let batch_mask = mask
+            .i((batch, ..))? // (896)
+            .to_vec1::<u8>()?;
+
+        batch_mask
             .iter()
             .enumerate()
-            .filter(|(_, x)| **x == 1)
-            .map(|(i, _)| i as u32)
-            .collect::<Vec<u32>>();
+            .for_each(|(i, x)| {
+                if *x == 1u8 {
+                    batch_indices.push(i as u32);
+                }
+            });
+
+        let batch_indices = Tensor::from_slice(
+            &batch_indices,
+            batch_indices.len(),
+            scores.device(),
+        )?; // (num_unmasked)
+
         indices.push(batch_indices);
     }
 
-    // Convert to Tensor
-    let mut indices_tensor = Vec::new();
-    #[allow(clippy::needless_range_loop)]
-    // foreach does not allow to use Result
-    for batch in 0..score.dims()[0] {
-        let batch_indices = Tensor::from_slice(
-            &indices[batch],
-            indices[batch].len(),
-            score.device(),
-        )?; // (num_unmasked)
-        indices_tensor.push(batch_indices);
-    }
-
-    Tensor::stack(&indices_tensor, 0) // (batch_size, num_unmasked)
+    Tensor::stack(&indices, 0) // (batch_size, num_unmasked)
 }
 
 fn argsort_by_score(
@@ -526,7 +508,7 @@ mod tests {
         // Load the model
         let model = BlazeFace::load(
             ModelType::Back,
-            variables,
+            &variables,
             anchors,
             100.,
             0.65,
@@ -545,8 +527,8 @@ mod tests {
         // Call forward method and get the output
         let output = model.forward(&input).unwrap();
 
-        assert_eq!(output.0.dims(), &[batch_size, 896, 1,]);
-        assert_eq!(output.1.dims(), &[batch_size, 896, 16,]);
+        assert_eq!(output.0.dims(), &[batch_size, 896, 16]);
+        assert_eq!(output.1.dims(), &[batch_size, 896, 1]);
     }
 
     #[test]
@@ -572,7 +554,7 @@ mod tests {
         // Load the model
         let model = BlazeFace::load(
             ModelType::Front,
-            variables,
+            &variables,
             anchors,
             100.,
             0.75,
@@ -591,8 +573,8 @@ mod tests {
         // Call forward method and get the output
         let output = model.forward(&input).unwrap();
 
-        assert_eq!(output.0.dims(), &[batch_size, 896, 1,]);
-        assert_eq!(output.1.dims(), &[batch_size, 896, 16,]);
+        assert_eq!(output.0.dims(), &[batch_size, 896, 16]);
+        assert_eq!(output.1.dims(), &[batch_size, 896, 1]);
     }
 
     #[test]
@@ -607,11 +589,13 @@ mod tests {
             .unwrap()
             .to_dtype(dtype)
             .unwrap();
-        let config = BlazeFaceConfig::back(100., 0.65, 0.3);
+        let config = BlazeFaceConfig::back(100., 0.65, 0.3, &device).unwrap();
 
         // Set up the input Tensor
-        let input =
-            Tensor::zeros((batch_size, 896, 16), dtype, &device).unwrap();
+        let input = Tensor::rand(-1., 1., (batch_size, 896, 16), &device)
+            .unwrap()
+            .to_dtype(dtype)
+            .unwrap();
 
         // Decode boxes
         let boxes = decode_boxes(&input, &anchors, &config).unwrap();
@@ -642,6 +626,34 @@ mod tests {
         let indices = unmasked_indices(&zeros, 0.5).unwrap();
 
         assert_eq!(indices.dims(), &[batch_size, 0]);
+
+        // Set up the test tensor
+        let input = Tensor::from_slice(
+            &[
+                0.8, 0., 0., 0., 0., 0., 0., 0., 0., 0.4, //
+                0., 0., 1., 0., 0., 0., 0., 0.7, 0., 0., //
+                0., 0., 0., 0., 0., 0.8, 0., 0.1, 0.6, 0., //
+            ],
+            (batch_size, 30, 1),
+            &device,
+        )
+        .unwrap()
+        .to_dtype(dtype)
+        .unwrap();
+
+        // Unmasked indices
+        let indices = unmasked_indices(&input, 0.5).unwrap();
+
+        assert_eq!(indices.dims(), &[batch_size, 5]);
+
+        assert_eq!(
+            indices
+                .squeeze(0)
+                .unwrap()
+                .to_vec1::<u32>()
+                .unwrap(),
+            &[0, 12, 17, 25, 28]
+        );
     }
 
     #[test]
@@ -669,7 +681,7 @@ mod tests {
         // Load the model
         let model = BlazeFace::load(
             ModelType::Back,
-            variables,
+            &variables,
             anchors,
             100.,
             0.65,
@@ -687,7 +699,7 @@ mod tests {
         assert_eq!(input.dims(), &[batch_size, 3, 256, 256]);
 
         // Call forward method and get the output
-        let (raw_scores, raw_boxes) = model.forward(&input).unwrap();
+        let (raw_boxes, raw_scores) = model.forward(&input).unwrap();
         // raw_scores: (batch_size, 896, 1), raw_boxes: (batch_size, 896, 16)
         assert_eq!(raw_boxes.dims(), &[batch_size, 896, 16]);
         assert_eq!(raw_scores.dims(), &[batch_size, 896, 1]);
@@ -1051,7 +1063,7 @@ mod tests {
         let dtype = DType::F32;
 
         // Setup the config
-        let config = BlazeFaceConfig::back(100., 0.65, 0.3);
+        let config = BlazeFaceConfig::back(100., 0.65, 0.3, &device).unwrap();
 
         // Setup the detections
         let detections = Tensor::from_slice(
@@ -1104,7 +1116,7 @@ mod tests {
         // Load the model
         let model = BlazeFace::load(
             ModelType::Front,
-            variables,
+            &variables,
             anchors,
             100.,
             0.65,
@@ -1120,8 +1132,8 @@ mod tests {
             .unwrap();
 
         // Call forward method and get the output
-        let (raw_scores, raw_boxes) = model.forward(&input).unwrap();
-        // raw_scores: (batch_size, 896, 1), raw_boxes: (batch_size, 896, 16)
+        let (raw_boxes, raw_scores) = model.forward(&input).unwrap();
+        // raw_boxes: (batch_size, 896, 16), raw_scores: (batch_size, 896, 1)
 
         // Tensors to detections
         let detections = tensors_to_detections(
@@ -1171,7 +1183,7 @@ mod tests {
         // Load the model
         let model = BlazeFace::load(
             ModelType::Front,
-            variables,
+            &variables,
             anchors,
             100.,
             0.75,
@@ -1202,26 +1214,26 @@ mod tests {
     ) -> Result<Tensor> {
         let pixels = image.to_rgb32f().to_vec();
 
-        let image = Tensor::from_slice(
-            &pixels,
+        let image = Tensor::from_vec(
+            pixels,
             (
                 3,
                 image.height() as usize,
                 image.width() as usize,
             ),
             device,
-        )?; // (3, resolution, resolution) in range [0., 1.]
+        )?; // in range [0., 1.]
 
         image
             .broadcast_mul(&Tensor::from_slice(
                 &[2_f32],
                 1,
                 device,
-            )?)? // (3, resolution, resolution) in range [0., 2.]
+            )?)? //in range [0., 2.]
             .broadcast_sub(&Tensor::from_slice(
                 &[1_f32],
                 1,
                 device,
-            )?) // (3, resolution, resolution) in range [-1., 1.]
+            )?) // in range [-1., 1.]
     }
 }
