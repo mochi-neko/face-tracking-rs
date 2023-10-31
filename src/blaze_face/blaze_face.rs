@@ -289,8 +289,10 @@ fn argsort_by_score(
         .i((.., 16))? // (num_detections)
         .to_vec1::<f32>()?;
 
-    // Create a vector of indices from 0 to num_detections-1
-    let mut indices: Vec<u32> = (0u32..scores.len() as u32).collect();
+    let count = scores.len();
+
+    // Create a vector of indices from 0 to num_detections - 1
+    let mut indices: Vec<u32> = (0u32..count as u32).collect();
 
     // Sort the indices by descending order of scores
     indices.sort_unstable_by(|&a, &b| {
@@ -302,8 +304,6 @@ fn argsort_by_score(
             .partial_cmp(&score_a)
             .unwrap()
     });
-
-    let count = indices.len();
 
     Tensor::from_vec(indices, count, detection.device())
 }
@@ -427,7 +427,7 @@ fn weighted_non_max_suppression(
 
     let mut output = Vec::new();
 
-    let mut remaining = argsort_by_score(detections)?; // (num_detections)
+    let mut remaining = argsort_by_score(detections)?; // (num_detections) of Dtype::U32
 
     while remaining.dims()[0] > 0 {
         let detection = detections.i((
@@ -436,10 +436,10 @@ fn weighted_non_max_suppression(
         ))?; // (17)
 
         let first_box = detection.i(0..4)?; // (4)
-        let other_box = detections.i((&remaining, ..4))?; // (remainings - 1, 4)
+        let other_box = detections.i((&remaining, ..4))?; // (remainings, 4) containing first_box
 
-        let ious = overlap_similarity(&first_box, &other_box)?; // (remainings - 1)
-        let mask = ious.gt(config.min_suppression_threshold)?; // (remainings - 1) of Dtype::U8
+        let ious = overlap_similarity(&first_box, &other_box)?; // (remainings)
+        let mask = ious.gt(config.min_suppression_threshold)?; // (remainings) of Dtype::U8
         let (overlapping, others) = mask_indices(&mask)?; // (unmasked_indices), (masked_indices)
 
         remaining = others; // (unmasked_indices)
@@ -448,12 +448,13 @@ fn weighted_non_max_suppression(
 
         if overlapping.dims()[0] > 1 {
             let overlapped = detections.i((&overlapping, ..))?; // (overlapped, 17)
-            let coordinates = overlapped // (overlapped, 17)
-                .i((.., 0..16))?; // (overlapped, 16)
-            let scores = overlapped.i((.., 16))?; // (overlapped, 1)
+            let coordinates = overlapped.i((.., 0..16))?; // (overlapped, 16)
+            let scores = overlapped
+                .i((.., 16))? // (overlapped, 1)
+                .squeeze(1)?; // (overlapped)
             let total_score = scores.sum(0)?; // (1)
             let overlapped_count = Tensor::from_slice(
-                &[overlapping.dims()[0] as f32],
+                &[overlapped.dims()[0] as f32],
                 1,
                 detections.device(),
             )?; // (1)
@@ -1119,7 +1120,7 @@ mod tests {
             &variables,
             anchors,
             100.,
-            0.65,
+            0.2,
             0.3,
         )
         .unwrap();
@@ -1186,7 +1187,7 @@ mod tests {
             &variables,
             anchors,
             100.,
-            0.75,
+            0.4,
             0.3,
         )
         .unwrap();
