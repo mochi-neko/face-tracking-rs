@@ -138,15 +138,15 @@ fn tensors_to_detections(
     let detection_boxes = decode_boxes(raw_boxes, anchors, config)?; // (batch_size, 896, 16)
 
     raw_scores.clamp(
-        -config.score_clipping_thresh,
-        config.score_clipping_thresh,
+        -config.score_clipping_threshold,
+        config.score_clipping_threshold,
     )?;
 
     let detection_scores = ops::sigmoid(raw_scores)?; // (batch_size, 896, 1)
 
     let indices = unmasked_indices(
         &detection_scores,
-        config.min_score_thresh,
+        config.min_score_threshold,
     )?; // (batch_size, num_detections)
 
     let mut output = Vec::new();
@@ -463,8 +463,8 @@ fn weighted_non_max_suppression(
             let overlapped = detections.i((&overlapping, ..))?; // (overlapped, 17)
             let coordinates = overlapped.i((.., 0..16))?; // (overlapped, 16)
             let scores = overlapped
-                .i((.., 16))? // (overlapped, 1)
-                .squeeze(1)?; // (overlapped)
+                .i((.., 16))?
+                .unsqueeze(1)?; // (overlapped, 1)
             let total_score = scores.sum(0)?; // (1)
             let overlapped_count = Tensor::from_slice(
                 &[overlapped.dims()[0] as f32],
@@ -475,7 +475,7 @@ fn weighted_non_max_suppression(
             let weighted_coordinates = coordinates
                 .broadcast_mul(&scores)? // (overlapped, 16)
                 .sum(0)? // (16)
-                .div(&total_score)?; // (16)
+                .broadcast_div(&total_score)?; // (16)
 
             let weighted_score = total_score.div(&overlapped_count)?; // (1)
 
@@ -1112,7 +1112,7 @@ mod tests {
         let dtype = DType::F32;
 
         // Load the model
-        let model = load_model(ModelType::Front, &device, dtype).unwrap();
+        let model = load_model(ModelType::Front, 0.75, &device, dtype).unwrap();
 
         // Load the test image
         let image = image::open("test_data/1face.png").unwrap();
@@ -1146,13 +1146,53 @@ mod tests {
     }
 
     #[test]
+    fn test_tensors_to_detections_by_3faces_front() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Front, 0.62, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/3faces.png").unwrap();
+        let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap();
+
+        // Call forward method and get the output
+        let (raw_boxes, raw_scores) = model.forward(&input).unwrap();
+        // raw_boxes: (batch_size, 896, 16), raw_scores: (batch_size, 896, 1)
+
+        // Tensors to detections
+        let detections = tensors_to_detections(
+            &raw_boxes,
+            &raw_scores,
+            &model.anchors,
+            &model.config,
+        )
+        .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
+
+        assert_eq!(detections.len(), 1);
+        assert_eq!(
+            detections[0]
+                .i((.., 16))
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap(),
+            vec![0.7212041, 0.7330125, 0.6364208]
+        );
+    }
+
+    #[test]
     fn test_tensors_to_detections_by_4faces_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
         let dtype = DType::F32;
 
         // Load the model
-        let model = load_model(ModelType::Back, &device, dtype).unwrap();
+        let model = load_model(ModelType::Back, 0.62, &device, dtype).unwrap();
 
         // Load the test image
         let image = image::open("test_data/4faces.png")
@@ -1187,18 +1227,18 @@ mod tests {
                 .unwrap()
                 .to_vec1::<f32>()
                 .unwrap(),
-            vec![0.8581102, 0.8371221, 0.6723021]
+            vec![0.8581102, 0.8371221, 0.6723021, 0.64631224]
         );
     }
 
     #[test]
-    fn test_predict_on_batch_by_1face() {
+    fn test_predict_on_batch_by_1face_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
         let dtype = DType::F32;
 
         // Load the model
-        let model = load_model(ModelType::Front, &device, dtype).unwrap();
+        let model = load_model(ModelType::Front, 0.75, &device, dtype).unwrap();
 
         // Load the test image
         let image = image::open("test_data/1face.png").unwrap();
@@ -1212,9 +1252,6 @@ mod tests {
             .predict_on_batch(&input)
             .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
 
-        assert_eq!(detections.len(), 1); // batch_size
-        assert_eq!(detections[0].len(), 1); // detectec faces
-        assert_eq!(detections[0][0].dims(), &[17]); // bounding box, keypoints and score
         assert_eq!(
             detections[0][0]
                 .i(16)
@@ -1223,6 +1260,205 @@ mod tests {
                 .unwrap(),
             0.76187944
         );
+    }
+
+    #[test]
+    fn test_predict_on_batch_by_1face_back() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Back, 0.62, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/1face.png")
+            .unwrap()
+            .resize_exact(
+                256,
+                256,
+                image::imageops::FilterType::Nearest,
+            );
+        let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap();
+
+        // Predict on batch
+        let detections = model
+            .predict_on_batch(&input)
+            .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
+
+        assert_eq!(
+            detections[0][0]
+                .i(16)
+                .unwrap()
+                .to_vec0::<f32>()
+                .unwrap(),
+            0.8166175
+        );
+    }
+
+    #[test]
+    fn test_predict_on_batch_by_3faces_front() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Front, 0.55, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/3faces.png").unwrap();
+        let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap();
+
+        // Predict on batch
+        let detections = model
+            .predict_on_batch(&input)
+            .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
+
+        // Convert detections to scores vector
+        let scores = detections[0]
+            .iter()
+            .map(|detection| {
+                detection
+                    .i(16)
+                    .unwrap()
+                    .to_vec0::<f32>()
+                    .unwrap()
+            })
+            .collect::<Vec<f32>>();
+
+        assert_eq!(
+            scores,
+            vec![0.7271083, 0.67302203, 0.6002525]
+        );
+    }
+
+    #[test]
+    fn test_predict_on_batch_by_3faces_back() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Back, 0.55, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/3faces.png")
+            .unwrap()
+            .resize_exact(
+                256,
+                256,
+                image::imageops::FilterType::Nearest,
+            );
+        let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap();
+
+        // Predict on batch
+        let detections = model
+            .predict_on_batch(&input)
+            .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
+
+        // Convert detections to scores vector
+        let scores = detections[0]
+            .iter()
+            .map(|detection| {
+                detection
+                    .i(16)
+                    .unwrap()
+                    .to_vec0::<f32>()
+                    .unwrap()
+            })
+            .collect::<Vec<f32>>();
+
+        assert_eq!(
+            scores,
+            vec![0.7521865, 0.7521865, 0.7521865]
+        );
+    }
+
+    #[test]
+    fn test_predict_on_batch_by_4faces_front() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Front, 0.6, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/4faces.png").unwrap();
+        let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap();
+
+        // Predict on batch
+        let detections = model
+            .predict_on_batch(&input)
+            .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
+
+        // Convert detections to scores vector
+        let scores = detections[0]
+            .iter()
+            .map(|detection| {
+                detection
+                    .i(16)
+                    .unwrap()
+                    .to_vec0::<f32>()
+                    .unwrap()
+            })
+            .collect::<Vec<f32>>();
+
+        assert_eq!(scores, vec![0.]);
+    }
+
+    #[test]
+    fn test_predict_on_batch_by_4faces_back() {
+        // Set up the device and dtype
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load the model
+        let model = load_model(ModelType::Back, 0.5, &device, dtype).unwrap();
+
+        // Load the test image
+        let image = image::open("test_data/4faces.png")
+            .unwrap()
+            .resize_exact(
+                256,
+                256,
+                image::imageops::FilterType::Nearest,
+            );
+        let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
+            .unwrap()
+            .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap();
+
+        // Predict on batch
+        let detections = model
+            .predict_on_batch(&input)
+            .unwrap(); // Vec<Vec<(17)>> with length:batch_size of length:num_detections
+
+        // Convert detections to scores vector
+        let scores = detections[0]
+            .iter()
+            .map(|detection| {
+                detection
+                    .i(16)
+                    .unwrap()
+                    .to_vec0::<f32>()
+                    .unwrap()
+            })
+            .collect::<Vec<f32>>();
+
+        assert_eq!(scores, vec![0.84761614, 0.7101848]);
     }
 
     #[test]
@@ -1343,6 +1579,7 @@ mod tests {
 
     fn load_model(
         model_type: ModelType,
+        min_score_threshold: f32,
         device: &Device,
         dtype: DType,
     ) -> Result<BlazeFace> {
@@ -1365,18 +1602,13 @@ mod tests {
             .to_dtype(dtype)?
             .to_device(device)?;
 
-        let min_score_thresh = match model_type {
-            | ModelType::Back => 0.65,
-            | ModelType::Front => 0.75,
-        };
-
         // Load the model
         BlazeFace::load(
             model_type,
             &variables,
             anchors,
             100.,
-            min_score_thresh,
+            min_score_threshold,
             0.3,
         )
     }
