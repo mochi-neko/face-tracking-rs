@@ -6,19 +6,26 @@ authors = ["Mochineko <t.o.e.4315@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 
+[lib]
+name = "face_tracking_rs"
+path = "src/lib.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.75"
-tokio = "1.33.0"
-tracing = "0.1.40"
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.3.0", features = [
     "cuda",
     "cudnn",
+    #"mkl",
+    #"accelerate",
 ] }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.3.0", features = [
     "cuda",
+    #"mkl",
+    #"accelerate",
 ] }
 
 [dev-dependencies]
+anyhow = "1.0.75"
 image = "0.24.7"
+imageproc = "0.23.0"

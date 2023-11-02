@@ -92,6 +92,14 @@ impl BlazeFace {
         self.model.forward(images)
     }
 
+    pub fn predict_on_image(
+        &self,
+        image: &Tensor, // (3, 256, 256) or (3, 128, 128)
+    ) -> Result<Vec<Vec<Tensor>>> // Vec<(detected_faces, 17)> with length:batch_size
+    {
+        self.predict_on_batch(&image.unsqueeze(0)?)
+    }
+
     pub fn predict_on_batch(
         &self,
         images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
@@ -180,40 +188,42 @@ fn decode_boxes(
     let mut coordinates = Vec::new();
     let two = Tensor::from_slice(&[2_f32], 1, raw_boxes.device())?; // (1)
 
-    let x_anchor = anchors.i((.., 0))?; // (896)
-    let y_anchor = anchors.i((.., 1))?; // (896)
-    let w_anchor = anchors.i((.., 2))?; // (896)
-    let h_anchor = anchors.i((.., 3))?; // (896)
+    // NOTE: Fix the order of the coordinates from original implementation,
+    // because the tensor shape is (batch, channels, height, witdh) then y -> x in PyTorch.
+    let y_anchor = anchors.i((.., 0))?; // (896)
+    let x_anchor = anchors.i((.., 1))?; // (896)
+    let h_anchor = anchors.i((.., 2))?; // (896)
+    let w_anchor = anchors.i((.., 3))?; // (896)
+
+    let y_center = raw_boxes
+        .i((.., .., 0))?
+        .broadcast_div(&config.y_scale)?
+        .broadcast_mul(&h_anchor)?
+        .broadcast_add(&y_anchor)?;
 
     let x_center = raw_boxes
-        .i((.., .., 0))? // (batch_size, 896)
+        .i((.., .., 1))? // (batch_size, 896)
         .broadcast_div(&config.x_scale)? // / (1)
         .broadcast_mul(&w_anchor)? // * (896)
         .broadcast_add(&x_anchor)?; // + (896)
                                     // = (batch_size, 896)
 
-    let y_center = raw_boxes
-        .i((.., .., 1))?
-        .broadcast_div(&config.y_scale)?
-        .broadcast_mul(&h_anchor)?
-        .broadcast_add(&y_anchor)?;
+    let h = raw_boxes
+        .i((.., .., 2))?
+        .broadcast_div(&config.h_scale)?
+        .broadcast_mul(&h_anchor)?;
 
     let w = raw_boxes
-        .i((.., .., 2))? // (batch_size, 896)
+        .i((.., .., 3))? // (batch_size, 896)
         .broadcast_div(&config.w_scale)? // / (1)
         .broadcast_mul(&w_anchor)?; // * (896)
                                     // = (batch_size, 896)
 
-    let h = raw_boxes
-        .i((.., .., 3))?
-        .broadcast_div(&config.h_scale)?
-        .broadcast_mul(&h_anchor)?;
-
     // Bounding box
-    let x_min = (&x_center - w.broadcast_div(&two)?)?; // (batch_size, 896)
-    let x_max = (&x_center + w.broadcast_div(&two)?)?;
-    let y_min = (&y_center - h.broadcast_div(&two)?)?;
+    let y_min = (&y_center - h.broadcast_div(&two)?)?; // (batch_size, 896)
+    let x_min = (&x_center - w.broadcast_div(&two)?)?;
     let y_max = (&y_center + h.broadcast_div(&two)?)?;
+    let x_max = (&x_center + w.broadcast_div(&two)?)?;
 
     coordinates.push(y_min);
     coordinates.push(x_min);
@@ -224,21 +234,21 @@ fn decode_boxes(
     for k in 0..6 {
         let offset = 4 + k * 2; // 4 = bounding box, 2 = (x, y)
 
+        let keypoint_y = raw_boxes
+            .i((.., .., offset))?
+            .broadcast_div(&config.y_scale)?
+            .broadcast_mul(&h_anchor)?
+            .broadcast_add(&y_anchor)?;
+
         let keypoint_x = raw_boxes
-            .i((.., .., offset))? // (batch_size, 896)
+            .i((.., .., offset + 1))? // (batch_size, 896)
             .broadcast_div(&config.x_scale)? // / (1)
             .broadcast_mul(&w_anchor)? // * (896)
             .broadcast_add(&x_anchor)?; // + (896)
                                         // = (batch_size, 896)
 
-        let keypoint_y = raw_boxes
-            .i((.., .., offset + 1))?
-            .broadcast_div(&config.y_scale)?
-            .broadcast_mul(&h_anchor)?
-            .broadcast_add(&y_anchor)?;
-
-        coordinates.push(keypoint_x);
         coordinates.push(keypoint_y);
+        coordinates.push(keypoint_x);
     }
 
     Tensor::stack(&coordinates, 2) // (batch_size, 896, 16)
