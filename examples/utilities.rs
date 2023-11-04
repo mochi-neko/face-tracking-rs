@@ -11,8 +11,8 @@ pub(crate) fn load_model(
     model_type: ModelType,
     min_score_threshold: f32,
     device: &Device,
-    dtype: DType,
 ) -> Result<BlazeFace> {
+    let dtype = DType::F32;
     let pth_path = match model_type {
         | ModelType::Back => "src/blaze_face/data/blazefaceback.pth",
         | ModelType::Front => "src/blaze_face/data/blazeface.pth",
@@ -40,6 +40,27 @@ pub(crate) fn load_model(
         min_score_threshold,
         0.3,
     )
+}
+
+pub(crate) fn load_image(
+    image_path: &str,
+    model_type: ModelType,
+) -> anyhow::Result<DynamicImage> {
+    let image = image::open(image_path)?;
+    let image = match model_type {
+        | ModelType::Back => image.resize_exact(
+            256,
+            256,
+            image::imageops::FilterType::Nearest,
+        ),
+        | ModelType::Front => image.resize_exact(
+            128,
+            128,
+            image::imageops::FilterType::Nearest,
+        ),
+    };
+
+    Ok(image)
 }
 
 pub(crate) fn convert_image_to_tensor(
@@ -74,21 +95,25 @@ pub(crate) fn convert_image_to_tensor(
 pub(crate) fn draw_face_detections(
     image: &RgbaImage,
     detections: Vec<FaceDetection>,
-    x_scale: f32,
-    y_scale: f32,
+    model_type: ModelType,
 ) -> Result<RgbaImage> {
+    let scale = match model_type {
+        | ModelType::Back => 256.,
+        | ModelType::Front => 128.,
+    };
+
     let mut image = image.clone();
 
     for detection in detections {
         // Draw the red bounding box
         let bounding_box = detection.bounding_box;
         let rect = Rect::at(
-            (bounding_box.x_min * x_scale) as i32,
-            (bounding_box.y_min * y_scale) as i32,
+            (bounding_box.x_min * scale) as i32,
+            (bounding_box.y_min * scale) as i32,
         )
         .of_size(
-            ((bounding_box.x_max - bounding_box.x_min) * x_scale) as u32,
-            ((bounding_box.y_max - bounding_box.y_min) * y_scale) as u32,
+            ((bounding_box.x_max - bounding_box.x_min) * scale) as u32,
+            ((bounding_box.y_max - bounding_box.y_min) * scale) as u32,
         );
         image = draw_hollow_rect(&image, rect, Rgba([255, 0, 0, 255]));
 
@@ -97,38 +122,38 @@ pub(crate) fn draw_face_detections(
         image = draw_cross(
             &image,
             Rgba([0, 255, 0, 255]),
-            (keypoints.right_eye.x * x_scale) as i32,
-            (keypoints.right_eye.y * y_scale) as i32,
+            (keypoints.right_eye.x * scale) as i32,
+            (keypoints.right_eye.y * scale) as i32,
         );
         image = draw_cross(
             &image,
             Rgba([0, 255, 0, 255]),
-            (keypoints.left_eye.x * x_scale) as i32,
-            (keypoints.left_eye.y * y_scale) as i32,
+            (keypoints.left_eye.x * scale) as i32,
+            (keypoints.left_eye.y * scale) as i32,
         );
         image = draw_cross(
             &image,
             Rgba([0, 255, 0, 255]),
-            (keypoints.nose.x * x_scale) as i32,
-            (keypoints.nose.y * y_scale) as i32,
+            (keypoints.nose.x * scale) as i32,
+            (keypoints.nose.y * scale) as i32,
         );
         image = draw_cross(
             &image,
             Rgba([0, 255, 0, 255]),
-            (keypoints.mouth.x * x_scale) as i32,
-            (keypoints.mouth.y * y_scale) as i32,
+            (keypoints.mouth.x * scale) as i32,
+            (keypoints.mouth.y * scale) as i32,
         );
         image = draw_cross(
             &image,
             Rgba([0, 255, 0, 255]),
-            (keypoints.right_ear.x * x_scale) as i32,
-            (keypoints.right_ear.y * y_scale) as i32,
+            (keypoints.right_ear.x * scale) as i32,
+            (keypoints.right_ear.y * scale) as i32,
         );
         image = draw_cross(
             &image,
             Rgba([0, 255, 0, 255]),
-            (keypoints.left_ear.x * x_scale) as i32,
-            (keypoints.left_ear.y * y_scale) as i32,
+            (keypoints.left_ear.x * scale) as i32,
+            (keypoints.left_ear.y * scale) as i32,
         );
     }
 

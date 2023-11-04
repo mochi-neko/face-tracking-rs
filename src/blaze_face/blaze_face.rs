@@ -10,6 +10,7 @@ use super::{
     blaze_face_front_model::BlazeFaceFrontModel,
 };
 
+#[derive(Clone, Copy, Debug)]
 pub enum ModelType {
     Back,
     Front,
@@ -123,12 +124,7 @@ impl BlazeFace {
             if !faces.is_empty() {
                 filtered_detections.push(faces);
             } else {
-                let zeros = Tensor::zeros(
-                    17,
-                    detection.dtype(),
-                    detection.device(),
-                )?; // (17)
-                filtered_detections.push(vec![zeros]);
+                filtered_detections.push(Vec::new());
             }
         }
 
@@ -1118,7 +1114,7 @@ mod tests {
     #[test]
     fn test_tensors_to_detections_by_1face_front() {
         // Set up the device and dtype
-        let device = Device::Cpu;
+        let device = Device::cuda_if_available(0).unwrap();
         let dtype = DType::F32;
 
         // Load the model
@@ -1144,6 +1140,12 @@ mod tests {
         )
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
+        let expected = if device.is_cpu() {
+            vec![0.76187944]
+        } else {
+            vec![0.7618404]
+        };
+
         assert_eq!(detections.len(), 1);
         assert_eq!(
             detections[0]
@@ -1151,14 +1153,14 @@ mod tests {
                 .unwrap()
                 .to_vec1::<f32>()
                 .unwrap(),
-            vec![0.76187944]
+            expected
         );
     }
 
     #[test]
     fn test_tensors_to_detections_by_3faces_front() {
         // Set up the device and dtype
-        let device = Device::Cpu;
+        let device = Device::cuda_if_available(0).unwrap();
         let dtype = DType::F32;
 
         // Load the model
@@ -1184,6 +1186,12 @@ mod tests {
         )
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
+        let expected = if device.is_cpu() {
+            vec![0.7212041, 0.7330125, 0.6364208]
+        } else {
+            vec![0.7212444, 0.7330514, 0.63645566]
+        };
+
         assert_eq!(detections.len(), 1);
         assert_eq!(
             detections[0]
@@ -1191,7 +1199,7 @@ mod tests {
                 .unwrap()
                 .to_vec1::<f32>()
                 .unwrap(),
-            vec![0.7212041, 0.7330125, 0.6364208]
+            expected
         );
     }
 
@@ -1426,7 +1434,7 @@ mod tests {
             })
             .collect::<Vec<f32>>();
 
-        assert_eq!(scores, vec![0.]);
+        assert_eq!(scores, Vec::<f32>::new());
     }
 
     #[test]

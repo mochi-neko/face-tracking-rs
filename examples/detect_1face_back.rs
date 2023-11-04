@@ -9,12 +9,12 @@ fn main() -> anyhow::Result<()> {
     let device = Device::cuda_if_available(0)?;
     println!("device: {:?}", device);
 
-    let model_type = ModelType::Front;
+    let model_type = ModelType::Back;
 
     let image = utilities::load_image("test_data/1face.png", model_type)?;
     let image_tensor = utilities::convert_image_to_tensor(&image, &device)?;
 
-    let model = utilities::load_model(model_type, 0.75, &device)?;
+    let model = utilities::load_model(model_type, 0.65, &device)?;
 
     let detections = model.predict_on_image(&image_tensor)?;
     let detections = FaceDetection::from_tensors(
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
         model_type,
     )?;
 
-    detected_image.save("output/1face_detected.png")?;
+    detected_image.save("output/1face_back_detected.png")?;
 
     Ok(())
 }
