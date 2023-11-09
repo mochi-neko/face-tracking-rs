@@ -20,6 +20,9 @@ RUN $HOME/.cargo/bin/rustup install 1.73.0 \
     && $HOME/.cargo/bin/rustup default 1.73.0
 # Set environment variables for Cargo
 ENV PATH="/root/.cargo/bin:${PATH}"
+# Specify Rust version to nightly to run benchmarks
+RUN rustup install nightly-2023-11-01 \
+    && rustup default nightly-2023-11-01
 # Setup Rust components and tools
 RUN rustup component add \
     rls \
