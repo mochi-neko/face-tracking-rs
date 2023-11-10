@@ -1,7 +1,9 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-use candle_core::{Device, Result, Tensor};
+use candle_core::{Device, Result, Tensor, DType};
+
+pub(crate) const DTYPE_IN_BLAZE_FACE: DType = DType::F16;
 
 pub struct BlazeFaceConfig {
     pub(crate) x_scale: Tensor,
@@ -21,10 +23,10 @@ impl BlazeFaceConfig {
         device: &Device,
     ) -> Result<Self> {
         Ok(Self {
-            x_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
-            y_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
-            h_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
-            w_scale: Tensor::from_slice(&[256_f32], 1, device)?, // (1)
+            x_scale: Tensor::from_slice(&[256.], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
+            y_scale: Tensor::from_slice(&[256.], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
+            h_scale: Tensor::from_slice(&[256.], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
+            w_scale: Tensor::from_slice(&[256.], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
             score_clipping_threshold,
             min_score_threshold,
             min_suppression_threshold,
@@ -38,10 +40,10 @@ impl BlazeFaceConfig {
         device: &Device,
     ) -> Result<Self> {
         Ok(Self {
-            x_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
-            y_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
-            h_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
-            w_scale: Tensor::from_slice(&[128_f32], 1, device)?, // (1)
+            x_scale: Tensor::from_slice(&[128_f32], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
+            y_scale: Tensor::from_slice(&[128_f32], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
+            h_scale: Tensor::from_slice(&[128_f32], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
+            w_scale: Tensor::from_slice(&[128_f32], 1, device)?.to_dtype(DTYPE_IN_BLAZE_FACE)?, // (1)
             score_clipping_threshold: score_clipping_thresh,
             min_score_threshold: min_score_thresh,
             min_suppression_threshold,

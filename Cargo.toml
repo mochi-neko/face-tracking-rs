@@ -24,6 +24,7 @@ candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.3.
     #"mkl",
     #"accelerate",
 ] }
+half = "2.3.1"
 
 [dev-dependencies]
 anyhow = "1.0.75"

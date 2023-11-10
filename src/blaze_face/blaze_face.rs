@@ -6,7 +6,7 @@ use candle_nn::{ops, VarBuilder};
 
 use crate::blaze_face::{
     blaze_face_back_model::BlazeFaceBackModel,
-    blaze_face_config::BlazeFaceConfig,
+    blaze_face_config::{BlazeFaceConfig, DTYPE_IN_BLAZE_FACE},
     blaze_face_front_model::BlazeFaceFrontModel,
     non_max_suppression,
 };
@@ -54,7 +54,16 @@ impl BlazeFace {
                 op: "load_blaze_face",
             });
         }
-        let anchors = anchors.to_dtype(DType::F32)?;
+
+        // NOTE: Enforce the dtype of the anchors and variables to be DType::F16.
+        let anchors = anchors.to_dtype(DType::F16)?;
+        if variables.dtype() != DTYPE_IN_BLAZE_FACE {
+            return Result::Err(Error::DTypeMismatchBinaryOp {
+                lhs: variables.dtype(),
+                rhs: DTYPE_IN_BLAZE_FACE,
+                op: "load_blaze_face",
+            });
+        }
 
         match model_type {
             | ModelType::Back => {
@@ -107,7 +116,8 @@ impl BlazeFace {
         images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
     ) -> Result<Vec<Vec<Tensor>>> // Vec<(detected_faces, 17)> with length:batch_size
     {
-        let (raw_boxes, raw_scores) = self.forward(images)?; // coordinates:(batch, 896, 16), score:(batch, 896, 1)
+        let images = images.to_dtype(DTYPE_IN_BLAZE_FACE)?;
+        let (raw_boxes, raw_scores) = self.forward(&images)?; // coordinates:(batch, 896, 16), score:(batch, 896, 1)
 
         let detections = tensors_to_detections(
             &raw_boxes,
@@ -120,7 +130,7 @@ impl BlazeFace {
         for detection in detections {
             let faces =  non_max_suppression::weighted_non_max_suppression(
                 &detection.contiguous()?,
-                &self.config,
+                self.config.min_suppression_threshold,
             )?; // Vec<(17)> with length:detected_faces
             if !faces.is_empty() {
                 filtered_detections.push(faces);
@@ -183,7 +193,8 @@ fn decode_boxes(
 ) -> Result<Tensor> // (batch_size, 896, 16)
 {
     let mut coordinates = Vec::new();
-    let two = Tensor::from_slice(&[2_f32], 1, raw_boxes.device())?; // (1)
+    let two = Tensor::from_slice(&[2.], 1, raw_boxes.device())? // (1)
+        .to_dtype(DTYPE_IN_BLAZE_FACE)?;
 
     // NOTE: Fix the order of the coordinates from original implementation,
     // because the tensor shape is (batch, channels, height, witdh) then y -> x in PyTorch.
@@ -291,17 +302,17 @@ fn unmasked_indices(
     Tensor::stack(&indices, 0) // (batch_size, num_unmasked)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use candle_core::{DType, Device, Tensor};
+    use half::f16;
 
     #[test]
     fn test_forward_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
         let batch_size = 1;
 
         // Load the variables
@@ -347,7 +358,7 @@ mod tests {
     fn test_forward_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
         let batch_size = 1;
 
         // Load the variables
@@ -393,7 +404,7 @@ mod tests {
     fn test_decode_boxes() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
         let batch_size = 1;
 
         // Set up the anchors and configuration
@@ -419,7 +430,7 @@ mod tests {
     fn test_unmasked_indices() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
         let batch_size = 1;
 
         // Set up the ones Tensor
@@ -472,7 +483,7 @@ mod tests {
     fn test_tensors_to_detections() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
         let batch_size = 1;
 
         // Load the variables
@@ -533,7 +544,7 @@ mod tests {
     fn test_tensors_to_detections_by_1face_front() {
         // Set up the device and dtype
         let device = Device::cuda_if_available(0).unwrap();
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Front, 0.75, &device, dtype).unwrap();
@@ -543,6 +554,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
             .unwrap()
             .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Call forward method and get the output
@@ -559,9 +572,9 @@ mod tests {
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
         let expected = if device.is_cpu() {
-            vec![0.76187944]
+            vec![f16::from_f32(0.76187944)]
         } else {
-            vec![0.7618404]
+            vec![f16::from_f32(0.7618404)]
         };
 
         assert_eq!(detections.len(), 1);
@@ -569,7 +582,7 @@ mod tests {
             detections[0]
                 .i((.., 16))
                 .unwrap()
-                .to_vec1::<f32>()
+                .to_vec1::<f16>()
                 .unwrap(),
             expected
         );
@@ -579,7 +592,7 @@ mod tests {
     fn test_tensors_to_detections_by_3faces_front() {
         // Set up the device and dtype
         let device = Device::cuda_if_available(0).unwrap();
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Front, 0.62, &device, dtype).unwrap();
@@ -589,6 +602,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
             .unwrap()
             .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Call forward method and get the output
@@ -605,9 +620,9 @@ mod tests {
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
         let expected = if device.is_cpu() {
-            vec![0.7212041, 0.7330125, 0.6364208]
+            vec![f16::from_f32(0.7212041), f16::from_f32(0.7330125), f16::from_f32(0.6364208)]
         } else {
-            vec![0.7212444, 0.7330514, 0.63645566]
+            vec![f16::from_f32(0.7246094), f16::from_f32(0.7368164), f16::from_f32(0.63916016)]
         };
 
         assert_eq!(detections.len(), 1);
@@ -615,7 +630,7 @@ mod tests {
             detections[0]
                 .i((.., 16))
                 .unwrap()
-                .to_vec1::<f32>()
+                .to_vec1::<f16>()
                 .unwrap(),
             expected
         );
@@ -625,7 +640,7 @@ mod tests {
     fn test_tensors_to_detections_by_4faces_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Back, 0.62, &device, dtype).unwrap();
@@ -641,6 +656,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
             .unwrap()
             .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Call forward method and get the output
@@ -661,9 +678,14 @@ mod tests {
             detections[0]
                 .i((.., 16))
                 .unwrap()
-                .to_vec1::<f32>()
+                .to_vec1::<f16>()
                 .unwrap(),
-            vec![0.8581102, 0.8371221, 0.6723021, 0.64631224]
+            vec![
+                f16::from_f32(0.85839844),
+                f16::from_f32(0.83740234),
+                f16::from_f32(0.67333984),
+                f16::from_f32(0.64746094)
+            ]
         );
     }
 
@@ -671,7 +693,7 @@ mod tests {
     fn test_predict_on_batch_by_1face_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Front, 0.75, &device, dtype).unwrap();
@@ -692,9 +714,9 @@ mod tests {
             detections[0][0]
                 .i(16)
                 .unwrap()
-                .to_vec0::<f32>()
+                .to_vec0::<f16>()
                 .unwrap(),
-            0.76187944
+            f16::from_f32(0.76187944)
         );
     }
 
@@ -702,7 +724,7 @@ mod tests {
     fn test_predict_on_batch_by_1face_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Back, 0.62, &device, dtype).unwrap();
@@ -729,9 +751,9 @@ mod tests {
             detections[0][0]
                 .i(16)
                 .unwrap()
-                .to_vec0::<f32>()
+                .to_vec0::<f16>()
                 .unwrap(),
-            0.8166175
+            f16::from_f32(0.8166175)
         );
     }
 
@@ -739,7 +761,7 @@ mod tests {
     fn test_predict_on_batch_by_3faces_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Front, 0.55, &device, dtype).unwrap();
@@ -763,14 +785,14 @@ mod tests {
                 detection
                     .i(16)
                     .unwrap()
-                    .to_vec0::<f32>()
+                    .to_vec0::<f16>()
                     .unwrap()
             })
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f16>>();
 
         assert_eq!(
             scores,
-            vec![0.7271083, 0.67302203, 0.6002525]
+            vec![f16::from_f32(0.7270508), f16::from_f32(0.67333984), f16::from_f32(0.60009766)]
         );
     }
 
@@ -778,7 +800,7 @@ mod tests {
     fn test_predict_on_batch_by_3faces_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Back, 0.55, &device, dtype).unwrap();
@@ -808,14 +830,14 @@ mod tests {
                 detection
                     .i(16)
                     .unwrap()
-                    .to_vec0::<f32>()
+                    .to_vec0::<f16>()
                     .unwrap()
             })
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f16>>();
 
         assert_eq!(
             scores,
-            vec![0.7521865, 0.7521865, 0.7521865]
+            vec![f16::from_f32(0.7521865), f16::from_f32(0.7521865), f16::from_f32(0.7521865)]
         );
     }
 
@@ -823,7 +845,7 @@ mod tests {
     fn test_predict_on_batch_by_4faces_front() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Front, 0.6, &device, dtype).unwrap();
@@ -847,19 +869,19 @@ mod tests {
                 detection
                     .i(16)
                     .unwrap()
-                    .to_vec0::<f32>()
+                    .to_vec0::<f16>()
                     .unwrap()
             })
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f16>>();
 
-        assert_eq!(scores, Vec::<f32>::new());
+        assert_eq!(scores, Vec::<f16>::new());
     }
 
     #[test]
     fn test_predict_on_batch_by_4faces_back() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Load the model
         let model = load_model(ModelType::Back, 0.5, &device, dtype).unwrap();
@@ -889,12 +911,12 @@ mod tests {
                 detection
                     .i(16)
                     .unwrap()
-                    .to_vec0::<f32>()
+                    .to_vec0::<f16>()
                     .unwrap()
             })
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f16>>();
 
-        assert_eq!(scores, vec![0.84761614, 0.7101848]);
+        assert_eq!(scores, vec![f16::from_f32(0.84765625), f16::from_f32(0.7109375)]);
     }
 
     #[test]

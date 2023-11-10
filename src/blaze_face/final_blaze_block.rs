@@ -151,7 +151,7 @@ mod tests {
     fn test_load() {
         // Set up the device
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         // Set up the configuration
         let batch_size = 1;

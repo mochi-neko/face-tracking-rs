@@ -468,6 +468,13 @@ impl BlazeFaceModel for BlazeFaceBackModel {
                 op: "forward",
             });
         }
+        if input.dtype() != self.classifier_8.weight().dtype() {
+            return Result::Err(Error::DTypeMismatchBinaryOp {
+                lhs: input.dtype(),
+                rhs: self.classifier_8.weight().dtype(),
+                op: "forward",
+            });
+        }
 
         let x = input
             .pad_with_zeros(2, 1, 2)? // height padding
@@ -518,7 +525,7 @@ mod tests {
     fn test_forward() {
         // Set up the device and dtype
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
         let batch_size = 1;
 
         // Load the variables

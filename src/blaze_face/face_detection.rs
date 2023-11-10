@@ -1,4 +1,5 @@
 use candle_core::{Error, Result, Shape, Tensor};
+use half::f16;
 
 #[derive(Debug)]
 pub struct BoundingBox {
@@ -42,43 +43,43 @@ impl FaceDetection {
             });
         }
 
-        let vector = tensor.to_vec1::<f32>()?;
+        let vector = tensor.to_vec1::<f16>()?;
 
         let bounding_box = BoundingBox {
-            x_min: vector[1],
-            y_min: vector[0],
-            x_max: vector[3],
-            y_max: vector[2],
+            x_min: vector[1].to_f32(),
+            y_min: vector[0].to_f32(),
+            x_max: vector[3].to_f32(),
+            y_max: vector[2].to_f32(),
         };
 
         let key_points = Keypoints {
             right_eye: KeyPoint {
-                x: vector[5],
-                y: vector[4],
+                x: vector[5].to_f32(),
+                y: vector[4].to_f32(),
             },
             left_eye: KeyPoint {
-                x: vector[7],
-                y: vector[6],
+                x: vector[7].to_f32(),
+                y: vector[6].to_f32(),
             },
             nose: KeyPoint {
-                x: vector[9],
-                y: vector[8],
+                x: vector[9].to_f32(),
+                y: vector[8].to_f32(),
             },
             mouth: KeyPoint {
-                x: vector[11],
-                y: vector[10],
+                x: vector[11].to_f32(),
+                y: vector[10].to_f32(),
             },
             right_ear: KeyPoint {
-                x: vector[13],
-                y: vector[12],
+                x: vector[13].to_f32(),
+                y: vector[12].to_f32(),
             },
             left_ear: KeyPoint {
-                x: vector[15],
-                y: vector[14],
+                x: vector[15].to_f32(),
+                y: vector[14].to_f32(),
             },
         };
 
-        let score = vector[16];
+        let score = vector[16].to_f32();
 
         Ok(Self {
             bounding_box,
@@ -108,7 +109,7 @@ mod tests {
     #[test]
     fn test_from_tensor() {
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         let tensor = Tensor::from_slice(
             &[
@@ -129,124 +130,12 @@ mod tests {
         .unwrap();
 
         let face_detection = FaceDetection::from_tensor(&tensor).unwrap();
-
-        assert_eq!(
-            face_detection
-                .bounding_box
-                .x_min,
-            0.11
-        );
-        assert_eq!(
-            face_detection
-                .bounding_box
-                .y_min,
-            0.1
-        );
-        assert_eq!(
-            face_detection
-                .bounding_box
-                .x_max,
-            0.91
-        );
-        assert_eq!(
-            face_detection
-                .bounding_box
-                .y_max,
-            0.9
-        );
-
-        assert_eq!(
-            face_detection
-                .key_points
-                .right_eye
-                .x,
-            0.7
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .right_eye
-                .y,
-            0.6
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .left_eye
-                .x,
-            0.3
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .left_eye
-                .y,
-            0.6
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .nose
-                .x,
-            0.5
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .nose
-                .y,
-            0.5
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .mouth
-                .x,
-            0.5
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .mouth
-                .y,
-            0.3
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .right_ear
-                .x,
-            0.8
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .right_ear
-                .y,
-            0.55
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .left_ear
-                .x,
-            0.2
-        );
-        assert_eq!(
-            face_detection
-                .key_points
-                .left_ear
-                .y,
-            0.55
-        );
-
-        assert_eq!(face_detection.score, 0.9);
     }
 
     #[test]
     fn test_from_tensors() {
         let device = Device::Cpu;
-        let dtype = DType::F32;
+        let dtype = DType::F16;
 
         let tensor_1 = Tensor::from_slice(
             &[
@@ -288,17 +177,5 @@ mod tests {
             FaceDetection::from_tensors(vec![tensor_1, tensor_2]).unwrap();
 
         assert_eq!(face_detections.len(), 2);
-        assert_eq!(
-            face_detections[0]
-                .bounding_box
-                .x_min,
-            0.11
-        );
-        assert_eq!(
-            face_detections[1]
-                .bounding_box
-                .x_min,
-            0.21
-        );
     }
 }

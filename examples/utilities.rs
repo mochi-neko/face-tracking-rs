@@ -12,7 +12,7 @@ pub(crate) fn load_model(
     min_score_threshold: f32,
     device: &Device,
 ) -> Result<BlazeFace> {
-    let dtype = DType::F32;
+    let dtype = DType::F16;
     let pth_path = match model_type {
         | ModelType::Back => "src/blaze_face/data/blazefaceback.pth",
         | ModelType::Front => "src/blaze_face/data/blazeface.pth",
