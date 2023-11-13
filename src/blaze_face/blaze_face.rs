@@ -128,9 +128,10 @@ impl BlazeFace {
 
         let mut filtered_detections = Vec::new();
         for detection in detections {
-            let faces =  non_max_suppression::weighted_non_max_suppression(
+            let faces = non_max_suppression::weighted_non_max_suppression(
                 &detection.contiguous()?,
-                self.config.min_suppression_threshold,
+                self.config
+                    .min_suppression_threshold,
             )?; // Vec<(17)> with length:detected_faces
             if !faces.is_empty() {
                 filtered_detections.push(faces);
@@ -572,9 +573,13 @@ mod tests {
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
         let expected = if device.is_cpu() {
-            vec![f16::from_f32(0.76187944)]
+            vec![f16::from_f32(
+                0.76187944,
+            )]
         } else {
-            vec![f16::from_f32(0.7618404)]
+            vec![f16::from_f32(
+                0.7618404,
+            )]
         };
 
         assert_eq!(detections.len(), 1);
@@ -620,9 +625,17 @@ mod tests {
         .unwrap(); // Vec<(num_detections, 17)> with length:batch_size
 
         let expected = if device.is_cpu() {
-            vec![f16::from_f32(0.7212041), f16::from_f32(0.7330125), f16::from_f32(0.6364208)]
+            vec![
+                f16::from_f32(0.7212041),
+                f16::from_f32(0.7330125),
+                f16::from_f32(0.6364208),
+            ]
         } else {
-            vec![f16::from_f32(0.7246094), f16::from_f32(0.7368164), f16::from_f32(0.63916016)]
+            vec![
+                f16::from_f32(0.7246094),
+                f16::from_f32(0.7368164),
+                f16::from_f32(0.63916016),
+            ]
         };
 
         assert_eq!(detections.len(), 1);
@@ -792,7 +805,11 @@ mod tests {
 
         assert_eq!(
             scores,
-            vec![f16::from_f32(0.7270508), f16::from_f32(0.67333984), f16::from_f32(0.60009766)]
+            vec![
+                f16::from_f32(0.7270508),
+                f16::from_f32(0.67333984),
+                f16::from_f32(0.60009766)
+            ]
         );
     }
 
@@ -837,7 +854,11 @@ mod tests {
 
         assert_eq!(
             scores,
-            vec![f16::from_f32(0.7521865), f16::from_f32(0.7521865), f16::from_f32(0.7521865)]
+            vec![
+                f16::from_f32(0.7521865),
+                f16::from_f32(0.7521865),
+                f16::from_f32(0.7521865)
+            ]
         );
     }
 
@@ -916,7 +937,13 @@ mod tests {
             })
             .collect::<Vec<f16>>();
 
-        assert_eq!(scores, vec![f16::from_f32(0.84765625), f16::from_f32(0.7109375)]);
+        assert_eq!(
+            scores,
+            vec![
+                f16::from_f32(0.84765625),
+                f16::from_f32(0.7109375)
+            ]
+        );
     }
 
     #[test]
