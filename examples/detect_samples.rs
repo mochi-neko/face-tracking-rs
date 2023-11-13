@@ -6,15 +6,18 @@ use face_tracking_rs::blaze_face::{
 };
 
 fn main() -> anyhow::Result<()> {
-    let device = Device::cuda_if_available(0)?;
+    let file_name = "28069935_s.jpg";
+
+    let path = "test_data/".to_string() + file_name;
+    let device = Device::Cpu;
     println!("device: {:?}", device);
 
     let model_type = ModelType::Back;
 
-    let image = utilities::load_image("test_data/1face.png", model_type)?;
+    let image = utilities::load_image(path.as_str(), model_type)?;
     let image_tensor = utilities::convert_image_to_tensor(&image, &device)?;
 
-    let model = utilities::load_model(model_type, 0.65, 0.3, &device)?;
+    let model = utilities::load_model(model_type, 0.6, 0.3, &device)?;
 
     let detections = model.predict_on_image(&image_tensor)?;
     let detections = FaceDetection::from_tensors(
@@ -31,7 +34,7 @@ fn main() -> anyhow::Result<()> {
         model_type,
     )?;
 
-    detected_image.save("output/1face_back_detected.png")?;
+    detected_image.save(("output/".to_string() + file_name + "_detected.png").as_str())?;
 
     Ok(())
 }

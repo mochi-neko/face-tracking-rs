@@ -129,7 +129,7 @@ mod tests {
         .to_dtype(dtype)
         .unwrap();
 
-        let face_detection = FaceDetection::from_tensor(&tensor).unwrap();
+        let _face_detection = FaceDetection::from_tensor(&tensor).unwrap();
     }
 
     #[test]

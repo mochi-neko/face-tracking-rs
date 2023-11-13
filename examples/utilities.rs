@@ -7,9 +7,10 @@ use image::{DynamicImage, Rgba, RgbaImage};
 use imageproc::drawing::{draw_cross, draw_hollow_rect};
 use imageproc::rect::Rect;
 
-pub(crate) fn load_model(
+pub fn load_model(
     model_type: ModelType,
     min_score_threshold: f32,
+    min_suppression_threshold: f32,
     device: &Device,
 ) -> Result<BlazeFace> {
     let dtype = DType::F16;
@@ -38,7 +39,7 @@ pub(crate) fn load_model(
         anchors,
         100.,
         min_score_threshold,
-        0.3,
+        min_suppression_threshold,
     )
 }
 
@@ -48,12 +49,12 @@ pub(crate) fn load_image(
 ) -> anyhow::Result<DynamicImage> {
     let image = image::open(image_path)?;
     let image = match model_type {
-        | ModelType::Back => image.resize_exact(
+        | ModelType::Back => image.resize_to_fill(
             256,
             256,
             image::imageops::FilterType::Nearest,
         ),
-        | ModelType::Front => image.resize_exact(
+        | ModelType::Front => image.resize_to_fill(
             128,
             128,
             image::imageops::FilterType::Nearest,

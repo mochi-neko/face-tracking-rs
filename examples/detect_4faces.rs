@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
     let image = utilities::load_image("test_data/4faces.png", model_type)?;
     let image_tensor = utilities::convert_image_to_tensor(&image,  &device)?;
 
-    let model = utilities::load_model(model_type, 0.6, &device)?;
+    let model = utilities::load_model(model_type, 0.6, 0.3, &device)?;
 
     let detections = model.predict_on_image(&image_tensor)?;
     let detections = FaceDetection::from_tensors(

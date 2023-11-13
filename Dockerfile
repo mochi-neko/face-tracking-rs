@@ -13,17 +13,14 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust
+# Install rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-# Specify Rust version to 1.73.0
-RUN $HOME/.cargo/bin/rustup install 1.73.0 \
-    && $HOME/.cargo/bin/rustup default 1.73.0
-# Set environment variables for Cargo
+# Set path for cargo
 ENV PATH="/root/.cargo/bin:${PATH}"
-# Specify Rust version to nightly to run benchmarks
-RUN rustup install nightly-2023-11-01 \
-    && rustup default nightly-2023-11-01
-# Setup Rust components and tools
+# Specify Rust version to 1.73.0
+RUN rustup install 1.73.0 \
+    && rustup default 1.73.0
+# Setup tools
 RUN rustup component add \
     rls \
     rust-analysis \

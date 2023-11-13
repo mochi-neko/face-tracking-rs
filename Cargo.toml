@@ -10,6 +10,11 @@ readme = "README.md"
 name = "face_tracking_rs"
 path = "src/lib.rs"
 
+[[bench]]
+name = "blaze_face_benches"
+harness = false
+
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -28,6 +33,7 @@ half = "2.3.1"
 
 [dev-dependencies]
 anyhow = "1.0.75"
+criterion = "0.5.1"
 image = "0.24.7"
 imageproc = "0.23.0"
 # opencv = "0.86.1"
