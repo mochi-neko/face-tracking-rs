@@ -7,6 +7,7 @@ use candle_nn::{Conv2d, Conv2dConfig, VarBuilder};
 use super::{
     blaze_block::{BlazeBlock, StrideType},
     blaze_face::BlazeFaceModel,
+    blaze_face_config::DTYPE_IN_BLAZE_FACE,
 };
 
 pub(crate) struct BlazeFaceFrontModel {
@@ -322,10 +323,24 @@ impl BlazeFaceModel for BlazeFaceFrontModel {
                 op: "forward",
             });
         }
-        if input.dtype() != self.classifier_8.weight().dtype() {
+        if input.dtype() != DTYPE_IN_BLAZE_FACE {
             return Result::Err(Error::DTypeMismatchBinaryOp {
                 lhs: input.dtype(),
-                rhs: self.classifier_8.weight().dtype(),
+                rhs: DTYPE_IN_BLAZE_FACE,
+                op: "forward",
+            });
+        }
+        if !input
+            .device()
+            .same_device(self.head.weight().device())
+        {
+            return Result::Err(Error::DeviceMismatchBinaryOp {
+                lhs: input.device().location(),
+                rhs: self
+                    .head
+                    .weight()
+                    .device()
+                    .location(),
                 op: "forward",
             });
         }
