@@ -18,6 +18,10 @@ Images for testing ([/test_data](./test_data/)) are following:
 
 These images were scaled down to 128x128 pixels as that is the expected input size of the model.
 
+## 3rd party notices
+
+See [NOTICE](./NOTICE.md).
+
 ## Acknowledgements
 
 - [MediaPipe](https://github.com/google/mediapipe)
