@@ -1,4 +1,4 @@
-use candle_core::{DType, Device, Result, Tensor};
+use candle_core::{safetensors, DType, Device, Result, Tensor};
 use face_tracking_rs::blaze_face::{
     blaze_face::{BlazeFace, ModelType},
     face_detection::FaceDetection,
@@ -14,13 +14,15 @@ pub fn load_model(
     device: &Device,
 ) -> Result<BlazeFace> {
     let dtype = DType::F16;
-    let pth_path = match model_type {
-        | ModelType::Back => "src/blaze_face/data/blazefaceback.pth",
-        | ModelType::Front => "src/blaze_face/data/blazeface.pth",
+    let safetensors_path = match model_type {
+        | ModelType::Back => "src/blaze_face/data/blazefaceback.safetensors",
+        | ModelType::Front => "src/blaze_face/data/blazeface.safetensors",
     };
+    let safetensors = safetensors::load(safetensors_path, device)?;
 
     // Load the variables
-    let variables = candle_nn::VarBuilder::from_pth(pth_path, dtype, device)?;
+    let variables =
+        candle_nn::VarBuilder::from_tensors(safetensors, dtype, device);
 
     let anchor_path = match model_type {
         | ModelType::Back => "src/blaze_face/data/anchorsback.npy",
