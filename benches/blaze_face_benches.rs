@@ -1,4 +1,4 @@
-use candle_core::{DType, Device, Result, Tensor};
+use candle_core::{safetensors, DType, Device, Result, Tensor};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use face_tracking_rs::blaze_face::blaze_face::{BlazeFace, ModelType};
 
@@ -9,11 +9,13 @@ fn load_model(
     let dtype = DType::F16;
 
     // Load the variables
-    let pth_path = match model_type {
-        | ModelType::Back => "src/blaze_face/data/blazefaceback.pth",
-        | ModelType::Front => "src/blaze_face/data/blazeface.pth",
+    let safetensors_path = match model_type {
+        | ModelType::Back => "src/blaze_face/data/blazefaceback.safetensors",
+        | ModelType::Front => "src/blaze_face/data/blazeface.safetensors",
     };
-    let variables = candle_nn::VarBuilder::from_pth(pth_path, dtype, device)?;
+    let safetensors = safetensors::load(safetensors_path, device)?;
+    let variables =
+        candle_nn::VarBuilder::from_tensors(safetensors, dtype, device);
 
     // Load the anchors
     let anchor_path = match model_type {
@@ -118,5 +120,50 @@ fn blaze_face_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, blaze_face_benchmark);
+fn blaze_face_forward_benchmark(c: &mut Criterion) {
+    let device = Device::Cpu;
+
+    // Load the models
+    let front_model = load_model(ModelType::Front, &device).unwrap();
+    let back_model = load_model(ModelType::Back, &device).unwrap();
+
+    // Load the image
+    let image_path = "test_data/1face.png";
+    let image_front = load_image(image_path, ModelType::Front, &device)
+        .unwrap()
+        .unsqueeze(0)
+        .unwrap();
+    let image_back = load_image(image_path, ModelType::Back, &device)
+        .unwrap()
+        .unsqueeze(0)
+        .unwrap();
+
+    c.bench_function("1face_front_forward", |b| {
+        b.iter(|| {
+            //black_box(|| {
+            // Run the model
+            let _detections = front_model
+                .forward(&image_front)
+                .unwrap();
+            //})
+        });
+    });
+
+    c.bench_function("1face_back_forward", |b| {
+        b.iter(|| {
+            //black_box(|| {
+            // Run the model
+            let _detections = back_model
+                .forward(&image_back)
+                .unwrap();
+            //})
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    blaze_face_benchmark,
+    blaze_face_forward_benchmark
+);
 criterion_main!(benches);

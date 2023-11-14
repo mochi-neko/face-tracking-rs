@@ -55,8 +55,6 @@ impl BlazeFace {
             });
         }
 
-        // NOTE: Enforce the dtype of the anchors and variables to be DType::F16.
-        let anchors = anchors.to_dtype(DType::F16)?;
         if variables.dtype() != DTYPE_IN_BLAZE_FACE {
             return Result::Err(Error::DTypeMismatchBinaryOp {
                 lhs: variables.dtype(),
@@ -64,6 +62,9 @@ impl BlazeFace {
                 op: "load_blaze_face",
             });
         }
+
+        // NOTE: Enforce the dtype of the anchors and variables to be DType::F16.
+        let anchors = anchors.to_dtype(DType::F16)?;
 
         match model_type {
             | ModelType::Back => {
@@ -95,7 +96,7 @@ impl BlazeFace {
         }
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         images: &Tensor, // back:(batch_size, 3, 256, 256) or front:(batch_size, 3, 128, 128)
     ) -> Result<(Tensor, Tensor)> // coordinates:(batch, 896, 16), score:(batch, 896, 1)
@@ -116,8 +117,7 @@ impl BlazeFace {
         images: &Tensor, // (batch_size, 3, 256, 256) or (batch_size, 3, 128, 128)
     ) -> Result<Vec<Vec<Tensor>>> // Vec<(detected_faces, 17)> with length:batch_size
     {
-        let images = images.to_dtype(DTYPE_IN_BLAZE_FACE)?;
-        let (raw_boxes, raw_scores) = self.forward(&images)?; // coordinates:(batch, 896, 16), score:(batch, 896, 1)
+        let (raw_boxes, raw_scores) = self.forward(images)?; // coordinates:(batch, 896, 16), score:(batch, 896, 1)
 
         let detections = tensors_to_detections(
             &raw_boxes,
@@ -306,7 +306,7 @@ fn unmasked_indices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::{DType, Device, Tensor};
+    use candle_core::{safetensors, DType, Device, Tensor};
     use half::f16;
 
     #[test]
@@ -317,12 +317,13 @@ mod tests {
         let batch_size = 1;
 
         // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazefaceback.pth",
-            dtype,
+        let safetensors = safetensors::load(
+            "src/blaze_face/data/blazefaceback.safetensors",
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Load the anchors
         let anchors =
@@ -363,12 +364,13 @@ mod tests {
         let batch_size = 1;
 
         // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazeface.pth",
-            dtype,
+        let safetensors = safetensors::load(
+            "src/blaze_face/data/blazeface.safetensors",
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Load the anchors
         let anchors =
@@ -488,12 +490,13 @@ mod tests {
         let batch_size = 1;
 
         // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazefaceback.pth",
-            dtype,
+        let safetensors = safetensors::load(
+            "src/blaze_face/data/blazefaceback.safetensors",
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Load the anchors
         let anchors = Tensor::read_npy("src/blaze_face/data/anchorsback.npy")
@@ -716,6 +719,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
             .unwrap()
             .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Predict on batch
@@ -753,6 +758,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
             .unwrap()
             .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Predict on batch
@@ -784,6 +791,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
             .unwrap()
             .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Predict on batch
@@ -833,6 +842,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
             .unwrap()
             .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Predict on batch
@@ -876,6 +887,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 128, 128)
             .unwrap()
             .unsqueeze(0) // (1, 3, 128, 128)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Predict on batch
@@ -918,6 +931,8 @@ mod tests {
         let input = convert_image_to_tensor(&image, &device) // (3, 256, 256)
             .unwrap()
             .unsqueeze(0) // (1, 3, 256, 256)
+            .unwrap()
+            .to_dtype(dtype)
             .unwrap();
 
         // Predict on batch
@@ -1068,14 +1083,17 @@ mod tests {
         device: &Device,
         dtype: DType,
     ) -> Result<BlazeFace> {
-        let pth_path = match model_type {
-            | ModelType::Back => "src/blaze_face/data/blazefaceback.pth",
-            | ModelType::Front => "src/blaze_face/data/blazeface.pth",
+        let safetensors_path = match model_type {
+            | ModelType::Back => {
+                "src/blaze_face/data/blazefaceback.safetensors"
+            },
+            | ModelType::Front => "src/blaze_face/data/blazeface.safetensors",
         };
+        let safetensors = safetensors::load(safetensors_path, device)?;
 
         // Load the variables
         let variables =
-            candle_nn::VarBuilder::from_pth(pth_path, dtype, device)?;
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, device);
 
         let anchor_path = match model_type {
             | ModelType::Back => "src/blaze_face/data/anchorsback.npy",
