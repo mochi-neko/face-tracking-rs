@@ -534,7 +534,7 @@ impl BlazeFaceModel for BlazeFaceBackModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::{DType, Device, Tensor};
+    use candle_core::{safetensors, DType, Device, Tensor};
 
     #[test]
     fn test_forward() {
@@ -543,13 +543,13 @@ mod tests {
         let dtype = DType::F16;
         let batch_size = 1;
 
-        // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazefaceback.pth",
-            dtype,
+        let safetensors = safetensors::load(
+            "src/blaze_face/data/blazefaceback.safetensors",
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Load the model
         let model = BlazeFaceBackModel::load(&variables).unwrap();

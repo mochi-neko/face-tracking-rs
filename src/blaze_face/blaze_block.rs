@@ -4,16 +4,18 @@
 use candle_core::{Module, Result, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, VarBuilder};
 
-/// BlazeBlock.
-pub(crate) struct BlazeBlock {
+/// BlazeBlock backbone.
+pub struct BlazeBlock {
     block_type: BlazeBlockType,
 }
 
-pub(crate) enum StrideType {
+/// Stride type for BlazeBlock.
+pub enum StrideType {
     Single,
     Double,
 }
 
+/// BlazeBlock type.
 enum BlazeBlockType {
     SingleStride(BlazeBlockSingleStride),
     DoubleStride(BlazeBlockDoubleStride),
@@ -65,7 +67,7 @@ impl BlazeBlock {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    pub fn new(
         in_channels: usize,
         out_channels: usize,
         kernel_size: usize,
@@ -161,7 +163,7 @@ impl BlazeBlockSingleStride {
     ) -> Result<Tensor> {
         let h = input;
 
-        let x = if self.channel_pad > 0 {
+        let x = if self.channel_pad != 0 {
             input.pad_with_zeros(1, 0, self.channel_pad)? // channel padding
         } else {
             input.clone()
@@ -236,7 +238,7 @@ impl BlazeBlockDoubleStride {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::{DType, Device, Tensor};
+    use candle_core::{safetensors, DType, Device, Tensor};
 
     #[test]
     fn test_blaze_block_for_single_stride() {
@@ -518,12 +520,13 @@ mod tests {
         let height = 64;
 
         // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazeface.pth",
-            dtype,
+        let safetensors = safetensors::load(
+            "src/blaze_face/data/blazeface.safetensors",
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Set up the input tensor
         let input = Tensor::rand(

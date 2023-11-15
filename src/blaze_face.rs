@@ -1,4 +1,4 @@
-pub(crate) mod blaze_block;
+pub mod blaze_block;
 #[allow(clippy::module_inception)]
 pub mod blaze_face;
 pub(crate) mod blaze_face_back_model;

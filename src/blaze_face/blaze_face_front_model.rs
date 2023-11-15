@@ -1,13 +1,12 @@
 // Reference implementation:
 // https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.py
 
-use candle_core::{Error, Module, Result, Shape, Tensor};
+use candle_core::{Module, Result, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, VarBuilder};
 
 use super::{
     blaze_block::{BlazeBlock, StrideType},
     blaze_face::BlazeFaceModel,
-    blaze_face_config::DTYPE_IN_BLAZE_FACE,
 };
 
 pub(crate) struct BlazeFaceFrontModel {
@@ -310,40 +309,6 @@ impl BlazeFaceModel for BlazeFaceFrontModel {
     ) -> Result<(Tensor, Tensor)> // coodinates:(batch, 896, 16), score:(batch, 896, 1),
     {
         let batch_size = input.dims()[0];
-        if input.dims()
-            != [
-                batch_size, 3, 128, 128,
-            ]
-        {
-            return Result::Err(Error::ShapeMismatchBinaryOp {
-                lhs: input.shape().clone(),
-                rhs: Shape::from(&[
-                    batch_size, 3, 128, 128,
-                ]),
-                op: "forward",
-            });
-        }
-        if input.dtype() != DTYPE_IN_BLAZE_FACE {
-            return Result::Err(Error::DTypeMismatchBinaryOp {
-                lhs: input.dtype(),
-                rhs: DTYPE_IN_BLAZE_FACE,
-                op: "forward",
-            });
-        }
-        if !input
-            .device()
-            .same_device(self.head.weight().device())
-        {
-            return Result::Err(Error::DeviceMismatchBinaryOp {
-                lhs: input.device().location(),
-                rhs: self
-                    .head
-                    .weight()
-                    .device()
-                    .location(),
-                op: "forward",
-            });
-        }
 
         let x = input
             .pad_with_zeros(2, 1, 2)? // height padding
@@ -388,7 +353,7 @@ impl BlazeFaceModel for BlazeFaceFrontModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::{DType, Device, Tensor};
+    use candle_core::{safetensors, DType, Device, Tensor};
 
     #[test]
     fn test_forward() {
@@ -398,12 +363,13 @@ mod tests {
         let batch_size = 1;
 
         // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
+        let safetensors = safetensors::load(
             "src/blaze_face/data/blazeface.pth",
-            dtype,
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Load the model
         let model = BlazeFaceFrontModel::load(&variables).unwrap();

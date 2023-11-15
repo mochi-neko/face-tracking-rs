@@ -91,7 +91,7 @@ impl Module for FinalBlazeBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::{DType, Device, Tensor};
+    use candle_core::{safetensors, DType, Device, Tensor};
 
     #[test]
     fn test_final_blaze_block() {
@@ -159,12 +159,13 @@ mod tests {
         let height = 64;
 
         // Load the variables
-        let variables = candle_nn::VarBuilder::from_pth(
-            "src/blaze_face/data/blazefaceback.pth",
-            dtype,
+        let safetensors = safetensors::load(
+            "src/blaze_face/data/blazefaceback.safetensors",
             &device,
         )
         .unwrap();
+        let variables =
+            candle_nn::VarBuilder::from_tensors(safetensors, dtype, &device);
 
         // Instantiate the FinalBlazeBlock
         let single_block = FinalBlazeBlock::load(
