@@ -1,6 +1,9 @@
-use candle_core::{safetensors, DType, Device, Result, Tensor};
+use candle_core::{safetensors, DType, Device, Module, Result, Tensor};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use face_tracking_rs::blaze_face::blaze_face::{BlazeFace, ModelType};
+use face_tracking_rs::blaze_face::{
+    blaze_block::BlazeBlock,
+    blaze_face::{BlazeFace, ModelType},
+};
 
 fn load_model(
     model_type: ModelType,
@@ -161,9 +164,74 @@ fn blaze_face_forward_benchmark(c: &mut Criterion) {
     });
 }
 
+fn blaze_block_benchmark(c: &mut Criterion) {
+    let device = Device::Cpu;
+    let dtype = DType::F16;
+
+    let single_weight_0 =
+        Tensor::zeros(&[24, 1, 3, 3], dtype, &device).unwrap();
+    let single_bias_0 = Tensor::zeros(&[24], dtype, &device).unwrap();
+    let single_weight_1 =
+        Tensor::zeros(&[24, 24, 1, 1], dtype, &device).unwrap();
+    let single_bias_1 = Tensor::zeros(&[24], dtype, &device).unwrap();
+
+    let blaze_block_single = BlazeBlock::new(
+        24,
+        24,
+        3,
+        face_tracking_rs::blaze_face::blaze_block::StrideType::Single,
+        single_weight_0,
+        single_bias_0,
+        single_weight_1,
+        single_bias_1,
+    )
+    .unwrap();
+
+    let single_input = Tensor::zeros(&[1, 24, 64, 64], dtype, &device).unwrap();
+
+    let double_weight_0 =
+        Tensor::zeros(&[28, 1, 3, 3], dtype, &device).unwrap();
+    let double_bias_0 = Tensor::zeros(&[28], dtype, &device).unwrap();
+    let double_weight_1 =
+        Tensor::zeros(&[32, 28, 1, 1], dtype, &device).unwrap();
+    let double_bias_1 = Tensor::zeros(&[32], dtype, &device).unwrap();
+
+    let blaze_block_double = BlazeBlock::new(
+        28,
+        32,
+        3,
+        face_tracking_rs::blaze_face::blaze_block::StrideType::Double,
+        double_weight_0,
+        double_bias_0,
+        double_weight_1,
+        double_bias_1,
+    )
+    .unwrap();
+
+    let double_intput =
+        Tensor::zeros(&[1, 28, 64, 64], dtype, &device).unwrap();
+
+    c.bench_function("blaze_block_single", |b| {
+        b.iter(|| {
+            let _output = blaze_block_single
+                .forward(&single_input)
+                .unwrap();
+        });
+    });
+
+    c.bench_function("blaze_block_double", |b| {
+        b.iter(|| {
+            let _output = blaze_block_double
+                .forward(&double_intput)
+                .unwrap();
+        });
+    });
+}
+
 criterion_group!(
     benches,
     blaze_face_benchmark,
-    blaze_face_forward_benchmark
+    blaze_face_forward_benchmark,
+    blaze_block_benchmark,
 );
 criterion_main!(benches);
